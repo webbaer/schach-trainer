@@ -21,6 +21,7 @@
       <div class="brand"><span class="logo">♞</span><div>Schach-Trainer<small>OFFLINE · KOSTENLOS</small></div></div>
       <div class="tabs">
         <button data-tab="home"><span class="ic">🏠</span>Übersicht</button>
+        <button data-tab="learn"><span class="ic">🎓</span>Lernen</button>
         <button data-tab="play"><span class="ic">♟</span>Spielen</button>
         <button data-tab="puzzle"><span class="ic">🧩</span>Rätsel</button>
         <button data-tab="analysis"><span class="ic">📈</span>Analyse</button>
@@ -31,8 +32,10 @@
 
     <div class="content">
       <section id="home"></section>
+      <section id="learn"></section>
       <main class="layout">
         <section class="board-area">
+          <div class="lesson-top" id="lessonTop"></div>
           <div class="player-strip" id="stripTop"></div>
           <div class="board-row">
             <div class="evalbar" id="evalbar"><div class="evalfill" id="evalfill"></div><span id="evaltext"></span></div>
@@ -40,6 +43,7 @@
           </div>
           <div class="player-strip" id="stripBottom"></div>
           <div class="board-nav hidden" id="boardNav"></div>
+          <div class="lesson-bar" id="lessonBar"></div>
         </section>
 
         <aside class="panel">
@@ -55,6 +59,7 @@
 
   <script src="engine.js"></script>
   <script src="puzzles.js"></script>
+  <script src="lessons.js"></script>
   <script src="app.js"></script>
   <script>
     if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js');

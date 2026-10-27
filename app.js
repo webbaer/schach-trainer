@@ -303,6 +303,7 @@ class Board {
       const [row, col] = this.rowCol(sq);
       if (col === 0) html += `<span class="coord rank">${(sq >> 4) + 1}</span>`;
       if (row === 7) html += `<span class="coord file">${'abcdefgh'[sq & 7]}</span>`;
+      if (o.stars && o.stars.includes(sq)) html += '<span class="star">⭐</span>';
       if (o.badge && o.badge.sq === sq) html += `<span class="badge" style="background:${o.badge.color}">${o.badge.sym}</span>`;
       d.innerHTML = html;
       if (sq === this.dragFrom && this.dragging && d.firstChild) d.firstChild.classList.add('dragging');
@@ -1002,6 +1003,7 @@ const Puzzles = {
 
   finishSolved() {
     this.solved = true;
+    markActivity();
     if (!this.failed) this.rate(true);
     Sound.play('good');
     this.msg = this.failed ? '✓ Gelöst – aber nicht im ersten Versuch.' : '🎉 Perfekt gelöst!';
@@ -1448,6 +1450,380 @@ function copyText(t) {
   else fallback();
 }
 
+// ---------- Tage-Serie (Lernen und Rätsel zählen) ----------
+function dayKey(d) { return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate(); }
+function getActivity() {
+  const a = store.get('activity', { last: null, streak: 0, best: 0 });
+  const y = new Date(); y.setDate(y.getDate() - 1);
+  if (a.last !== dayKey(new Date()) && a.last !== dayKey(y)) a.streak = 0;
+  return a;
+}
+function markActivity() {
+  const a = store.get('activity', { last: null, streak: 0, best: 0 });
+  const today = dayKey(new Date()), y = new Date(); y.setDate(y.getDate() - 1);
+  if (a.last === today) return;
+  a.streak = a.last === dayKey(y) ? a.streak + 1 : 1;
+  a.best = Math.max(a.best || 0, a.streak);
+  a.last = today;
+  store.set('activity', a);
+}
+
+// ---------- Modus: Lernpfad ----------
+const ALL_LESSONS = LESSONS.flatMap(u => u.lessons.map(l => ({ unit: u, lesson: l })));
+const PRAISE = ['Richtig!', 'Super!', 'Klasse!', 'Genau!', 'Perfekt!', 'Stark!', 'Sehr gut!'];
+const mdText = t => esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\n/g, '<br>');
+
+const Learn = {
+  st: Object.assign({ done: {}, xp: 0 }, store.get('learn', {})),
+  lesson: null, unit: null, idx: 0, mistakes: 0, pos: null, locked: false, solved: false, fb: null, token: 0,
+
+  save() { store.set('learn', this.st); },
+  isUnlocked(k) { return k === 0 || this.st.done[ALL_LESSONS[k - 1].lesson.id] != null || this.st.done[ALL_LESSONS[k].lesson.id] != null; },
+  nextIndex() { const k = ALL_LESSONS.findIndex(x => this.st.done[x.lesson.id] == null); return k < 0 ? null : k; },
+
+  activate() {
+    if (this.lesson) { this.setMode('lesson'); this.renderStep(); }
+    else { this.setMode('path'); this.renderPath(); }
+  },
+  setMode(m) {
+    document.body.classList.toggle('learn-mode', m === 'path');
+    document.body.classList.toggle('lesson-mode', m === 'lesson');
+    resize();
+  },
+
+  // ----- Pfad-Übersicht -----
+  renderPath() {
+    const act = getActivity();
+    const doneCount = Object.keys(this.st.done).length;
+    const next = this.nextIndex();
+    let k = 0, html = `<div class="learn-head">
+        <div><h1>Lernpfad</h1><p class="muted">Von null auf Schach – Schritt für Schritt.</p></div>
+        <div class="chips"><span class="chip">🔥 ${act.streak} ${act.streak === 1 ? 'Tag' : 'Tage'}</span><span class="chip">⚡ ${this.st.xp} XP</span><span class="chip">🎓 ${doneCount}/${ALL_LESSONS.length}</span></div>
+      </div>`;
+    LESSONS.forEach((u, ui) => {
+      const uDone = u.lessons.filter(l => this.st.done[l.id] != null).length;
+      html += `<div class="unit-banner u${ui % 8}"><div class="ub-ic">${u.icon}</div><div><div class="ub-k">Kapitel ${ui + 1}</div><b>${u.title}</b><div class="ub-d">${u.desc}</div></div>
+        <div class="ub-p">${uDone}/${u.lessons.length}</div></div><div class="path">`;
+      u.lessons.forEach((l, li) => {
+        const stars = this.st.done[l.id];
+        const unlocked = this.isUnlocked(k), current = k === next;
+        const cls = stars != null ? 'done' : current ? 'current' : unlocked ? 'open' : 'locked';
+        const x = Math.round(Math.sin((k + 1) * 1.1) * 70);
+        html += `<div class="node-wrap" style="transform:translateX(${x}px)">
+          ${current ? '<div class="go-bubble">LOS!</div>' : ''}
+          <button class="node ${cls} u${ui % 8}" data-act="open" data-arg="${k}" ${unlocked ? '' : 'disabled'}>${stars != null ? '✓' : unlocked ? l.icon : '🔒'}</button>
+          <div class="node-label">${l.title}</div>
+          ${stars != null ? `<div class="node-stars">${'★'.repeat(stars)}<span>${'★'.repeat(3 - stars)}</span></div>` : ''}
+        </div>`;
+        k++;
+      });
+      html += '</div>';
+    });
+    html += `<div class="path-end">${next == null ? '🏆 Du hast den ganzen Lernpfad geschafft! Weiter geht’s mit Rätseln und Partien gegen die Bots.' : '🏆 Am Ende wartet die Meisterprüfung.'}</div>`;
+    $('learn').innerHTML = html;
+    bind($('learn'), { open: k => this.start(+k) });
+    const cur = $('learn').querySelector('.node.current');
+    if (cur && this.scrollOnShow !== false) setTimeout(() => cur.scrollIntoView({ block: 'center', behavior: 'smooth' }), 50);
+  },
+
+  // ----- Lektion -----
+  start(k) {
+    const x = ALL_LESSONS[k];
+    if (!x) return;
+    this.k = k; this.lesson = x.lesson; this.unit = x.unit; this.idx = 0; this.mistakes = 0;
+    this.setMode('lesson');
+    this.startStep();
+  },
+  exit() {
+    this.token++;
+    engine.cancel();
+    this.lesson = null;
+    this.setMode('path');
+    this.renderPath();
+  },
+  get step() { return this.lesson.steps[this.idx]; },
+
+  startStep() {
+    const st = this.step;
+    this.token++;
+    this.solved = st.t === 'info'; this.fb = null; this.locked = false; this.lastMove = null;
+    this.lineIdx = 0; this.userMoves = 0; this.history = []; this.wrongOpts = new Set(); this.hintUsed = false;
+    const fen = lessonFen(st);
+    this.startFen = fen;
+    this.pos = fen ? this.makePos(fen, st.t === 'collect') : null;
+    this.stars = (st.stars || []).map(C.parseSq);
+    const interactive = !['info', 'quiz'].includes(st.t);
+    board.setFlipped(!!(interactive && this.pos && this.pos.side === 1 && !st.last) || !!(st.last && this.pos && this.pos.side === 0));
+    if (st.last) {
+      this.locked = true;
+      this.draw();
+      this.renderBar();
+      const tok = this.token;
+      setTimeout(() => {
+        if (tok !== this.token) return;
+        const m = this.pos.fromUci(st.last);
+        this.lastMove = [C.mFrom(m), C.mTo(m)];
+        this.pos.make(m);
+        this.history.push(st.last);
+        Sound.play('move');
+        this.locked = false;
+        this.draw(true);
+      }, 700);
+    } else this.draw();
+    this.renderBar();
+  },
+
+  makePos(fen, collect) {
+    const p = new C.Position(fen);
+    let wk = false, bk = false;
+    for (let sq = 0; sq < 128; sq++) { if (sq & 0x88) { sq += 7; continue; } if (p.board[sq] === 6) wk = true; if (p.board[sq] === 14) bk = true; }
+    if (collect) {
+      // Sammelübung: freie Figurenzüge ohne Könige und Schachregeln, Weiß zieht immer
+      p.legalMoves = function () { return this.genMoves([], false).filter(m => !(C.mFlags(m) & C.F_CASTLE)); };
+      p.inCheck = () => false;
+      p.status = () => null;
+    } else if (!wk || !bk) {
+      p.inCheck = () => false;
+    }
+    return p;
+  },
+
+  draw(animate) {
+    const st = this.step;
+    document.body.classList.toggle('no-board', !this.pos);
+    if (!this.pos) return;
+    const interactive = !['info', 'quiz'].includes(st.t);
+    board.movable = interactive && !this.locked && !this.solved ? this.pos.side : -1;
+    const marks = {};
+    for (const s of st.marks || []) marks[C.parseSq(s)] = 'mark';
+    if (this.fbSq) marks[this.fbSq[0]] = this.fbSq[1];
+    board.set(this.pos, {
+      last: this.lastMove, marks, stars: this.stars,
+      arrows: (st.arrows || []).map(([a, b]) => ({ from: C.parseSq(a), to: C.parseSq(b), color: 'rgba(255,170,60,.85)' })),
+      animate: animate && this.lastMove ? this.lastMove : null
+    });
+  },
+
+  renderBar() {
+    const st = this.step, n = this.lesson.steps.length;
+    $('lessonTop').innerHTML = `<button class="lt-close" data-act="close" title="Lektion verlassen">✕</button>
+      <div class="lt-prog"><div style="width:${Math.round(this.idx / n * 100)}%"></div></div>
+      <div class="lt-title">${this.lesson.icon} ${this.lesson.title}</div>`;
+    bind($('lessonTop'), { close: () => { if (this.idx === 0 || confirm('Lektion verlassen? Dein Fortschritt in dieser Lektion geht verloren.')) this.exit(); } });
+
+    const typeLabel = { info: '📖 Lernen', quiz: '❓ Frage', collect: '⭐ Sammeln', move: '🎯 Finde den Zug', check: '⚡ Schach geben', mate: '👑 Matt in 1', any: '🛡️ Rette den König', line: '⚔️ Taktik', playmate: '🏆 Prüfung' }[st.t];
+    let html = `<div class="lb-type">${typeLabel}</div><div class="lb-text">${mdText(st.t === 'quiz' ? st.q : st.text)}</div>`;
+    if (st.t === 'quiz') {
+      html += `<div class="lb-opts">${st.opts.map((o, i) => {
+        const c = this.solved && i === st.a ? 'right' : this.wrongOpts.has(i) ? 'wrong' : '';
+        return `<button class="opt ${c}" data-act="opt" data-arg="${i}" ${this.solved || this.wrongOpts.has(i) ? 'disabled' : ''}>${esc(o)}</button>`;
+      }).join('')}</div>`;
+    }
+    if (st.t === 'playmate') html += `<div class="lb-count">Zug ${this.userMoves} von ${st.max}</div>`;
+    if (this.fb) html += `<div class="lb-fb ${this.fb.ok ? 'ok' : 'bad'}"><b>${this.fb.title}</b>${this.fb.text ? ' ' + mdText(this.fb.text) : ''}</div>`;
+    if (this.solved) html += `<button class="btn primary full lb-next" data-act="next">${this.idx + 1 >= n ? 'Lektion abschließen' : 'Weiter'}</button>`;
+    else if (this.fb && !this.fb.ok && this.fb.retry) html += `<button class="btn full" data-act="retry">↻ Nochmal versuchen</button>`;
+    else if (['move', 'line', 'mate', 'check'].includes(st.t)) html += `<button class="btn small lb-skip" data-act="hint">💡 Tipp</button>`;
+    $('lessonBar').innerHTML = html;
+    bind($('lessonBar'), {
+      opt: i => this.answer(+i),
+      next: () => this.next(),
+      retry: () => this.startStep(),
+      hint: () => this.hint()
+    });
+    const nb = $('lessonBar').querySelector('.lb-next, [data-act=retry]');
+    if (nb) setTimeout(() => nb.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 60);
+  },
+
+  answer(i) {
+    const st = this.step;
+    if (i === st.a) { this.solved = true; this.fb = { ok: true, title: this.praise(), text: st.why }; Sound.play('good'); }
+    else { this.wrongOpts.add(i); this.mistakes++; this.fb = { ok: false, title: 'Leider falsch.', text: 'Versuch es nochmal!' }; Sound.play('bad'); }
+    this.renderBar();
+  },
+  praise() { return PRAISE[Math.floor(Math.random() * PRAISE.length)]; },
+
+  hint() {
+    const st = this.step;
+    if (!this.hintUsed) { this.hintUsed = true; this.mistakes++; }
+    let uci = null;
+    if (st.t === 'move') uci = st.ok[0];
+    else if (st.t === 'line') uci = st.sol[this.lineIdx];
+    else {
+      const want = st.t === 'mate' ? 'checkmate' : 'check';
+      for (const m of this.pos.legalMoves()) {
+        this.pos.make(m);
+        const hit = want === 'checkmate' ? this.pos.status() === 'checkmate' : this.pos.inCheck();
+        this.pos.unmake();
+        if (hit) { uci = this.pos.toUci(m); break; }
+      }
+    }
+    if (!uci) return;
+    this.hinted = true;
+    this.fbSq = [C.parseSq(uci.slice(0, 2)), 'hint'];
+    this.fb = { ok: true, title: '💡 Tipp:', text: 'Ziehe mit der markierten Figur.' };
+    this.draw(); this.renderBar();
+    this.fbSq = null;
+  },
+
+  success(text) {
+    this.solved = true;
+    this.fb = { ok: true, title: this.praise(), text: text || this.step.good || '' };
+    Sound.play('good');
+    this.draw(); this.renderBar();
+  },
+
+  wrong(text, undo) {
+    this.mistakes++;
+    this.fb = { ok: false, title: 'Nicht ganz.', text };
+    Sound.play('bad');
+    this.locked = true;
+    this.draw(); this.renderBar();
+    const tok = this.token;
+    setTimeout(() => {
+      if (tok !== this.token) return;
+      if (undo) { this.pos.unmake(); this.history.pop(); this.lastMove = this.prevLast; }
+      this.locked = false;
+      this.draw();
+    }, 1100);
+  },
+
+  onUserMove(uci) {
+    const st = this.step;
+    if (this.locked || this.solved || !this.pos) return;
+    const m = this.pos.fromUci(uci);
+    if (!m) return;
+    const cap = !!(C.mFlags(m) & C.F_CAP);
+    const san = st.t === 'collect' ? '' : this.pos.toSan(m);
+    this.prevLast = this.lastMove;
+    this.lastMove = [C.mFrom(m), C.mTo(m)];
+    this.pos.make(m);
+    this.history.push(uci);
+    this.fb = null;
+
+    if (st.t === 'collect') {
+      this.pos.side = 0;
+      this.pos.ep = -1;
+      const to = C.mTo(m);
+      const hadStar = this.stars.includes(to);
+      this.stars = this.stars.filter(s => s !== to);
+      Sound.play(cap || hadStar ? 'capture' : 'move');
+      let black = false;
+      for (let sq = 0; sq < 128; sq++) { if (sq & 0x88) { sq += 7; continue; } if (this.pos.board[sq] && (this.pos.board[sq] >> 3)) black = true; }
+      if (!this.stars.length && !black) this.success();
+      else { this.draw(true); this.renderBar(); }
+      return;
+    }
+
+    Sound.forMove({ capture: cap, san }, this.pos);
+    const status = this.pos.status();
+    switch (st.t) {
+      case 'move':
+        if (st.ok.includes(uci)) this.success();
+        else if (uci.length === 5 && st.ok.some(o => o.slice(0, 4) === uci.slice(0, 4))) this.wrong('Fast! Wähle beim Umwandeln eine **Dame** – sie ist am stärksten.', true);
+        else this.wrong(st.why || 'Probier einen anderen Zug.', true);
+        break;
+      case 'check':
+        if (this.pos.inCheck()) this.success(status === 'checkmate' ? 'Sogar Schachmatt!' : '');
+        else this.wrong('Das ist kein Schach – der schwarze König wird nicht angegriffen.', true);
+        break;
+      case 'mate':
+        if (status === 'checkmate') this.success('Schachmatt! 🎉');
+        else if (status === 'stalemate') this.wrong('Oh nein – **Patt**! Schwarz kann nicht ziehen, steht aber nicht im Schach. Das wäre nur Remis.', true);
+        else if (this.pos.inCheck()) this.wrong('Schach – aber der König kann noch entkommen. Das ist noch kein Matt.', true);
+        else this.wrong('Das ist noch kein Matt. Greife den König so an, dass er nicht entkommen kann.', true);
+        break;
+      case 'any':
+        this.success('Der König ist in Sicherheit.');
+        break;
+      case 'line':
+        if (uci === st.sol[this.lineIdx] || status === 'checkmate') {
+          this.lineIdx += 2;
+          if (this.lineIdx >= st.sol.length || status === 'checkmate') { this.success(); return; }
+          this.fb = { ok: true, title: this.praise(), text: 'Und weiter …' };
+          this.locked = true;
+          this.draw(true); this.renderBar();
+          const tok = this.token;
+          setTimeout(() => {
+            if (tok !== this.token) return;
+            const r = this.pos.fromUci(st.sol[this.lineIdx - 1]);
+            const rc = !!(C.mFlags(r) & C.F_CAP), rs = this.pos.toSan(r);
+            this.lastMove = [C.mFrom(r), C.mTo(r)];
+            this.pos.make(r);
+            this.history.push(st.sol[this.lineIdx - 1]);
+            Sound.forMove({ capture: rc, san: rs }, this.pos);
+            this.locked = false;
+            this.fb = { ok: true, title: 'Jetzt du!', text: '' };
+            this.draw(true); this.renderBar();
+          }, 650);
+        } else this.wrong('Das ist nicht der stärkste Zug. Schau, welche Figuren auf einer Linie stehen!', true);
+        break;
+      case 'playmate':
+        this.userMoves++;
+        if (status === 'checkmate') { this.success(`Schachmatt in ${this.userMoves} Zügen! 🏆`); return; }
+        if (status) { this.failPlay(status === 'stalemate' ? 'Patt! Schwarz hat keinen Zug mehr, steht aber nicht im Schach – Remis.' : 'Die Partie ist remis.'); return; }
+        if (this.userMoves >= st.max) { this.failPlay(`${st.max} Züge sind um. Drücke den König schneller an den Rand!`); return; }
+        this.engineReply();
+        break;
+    }
+  },
+
+  failPlay(text) {
+    this.mistakes++;
+    this.fb = { ok: false, title: 'Nicht geschafft.', text, retry: true };
+    Sound.play('bad');
+    this.locked = true;
+    this.draw(true); this.renderBar();
+  },
+
+  async engineReply() {
+    this.locked = true;
+    this.draw(true); this.renderBar();
+    const tok = this.token, t0 = Date.now();
+    const r = await engine.request({ cmd: 'search', fen: this.startFen, moves: this.history, timeMs: 350 });
+    const wait = 500 - (Date.now() - t0);
+    if (wait > 0) await sleep(wait);
+    if (tok !== this.token || !r || !r.move) return;
+    const m = this.pos.fromUci(r.move);
+    const cap = !!(C.mFlags(m) & C.F_CAP), san = this.pos.toSan(m);
+    this.lastMove = [C.mFrom(m), C.mTo(m)];
+    this.pos.make(m);
+    this.history.push(r.move);
+    Sound.forMove({ capture: cap, san }, this.pos);
+    const st = this.pos.status();
+    if (st) { this.failPlay(st === 'insufficient' ? 'Deine Figur wurde geschlagen – jetzt kann niemand mehr gewinnen.' : 'Die Partie ist remis.'); return; }
+    this.locked = false;
+    this.draw(true); this.renderBar();
+  },
+
+  next() {
+    if (this.idx + 1 < this.lesson.steps.length) { this.idx++; this.startStep(); return; }
+    this.finish();
+  },
+
+  finish() {
+    const stars = this.mistakes === 0 ? 3 : this.mistakes <= 2 ? 2 : 1;
+    const first = this.st.done[this.lesson.id] == null;
+    const xp = (first ? 10 : 5) + stars * 5;
+    this.st.done[this.lesson.id] = Math.max(stars, this.st.done[this.lesson.id] || 0);
+    this.st.xp += xp;
+    this.save();
+    markActivity();
+    Sound.play('end');
+    const unitDone = this.unit.lessons.every(l => this.st.done[l.id] != null);
+    const nextK = this.k + 1 < ALL_LESSONS.length ? this.k + 1 : null;
+    showModal(`<div class="finish-stars">${[0, 1, 2].map(i => `<span class="${i < stars ? 'on' : ''}" style="animation-delay:${i * .15}s">★</span>`).join('')}</div>
+      <h2>${unitDone && first ? 'Kapitel geschafft! 🏆' : 'Lektion geschafft!'}</h2>
+      <p class="muted">${this.lesson.title} · ${this.mistakes === 0 ? 'fehlerfrei 🎯' : this.mistakes + (this.mistakes === 1 ? ' Fehler' : ' Fehler')}</p>
+      <div class="xp-gain">+${xp} XP</div>
+      ${nextK != null ? `<button class="btn primary full" data-act="cont">Nächste Lektion: ${ALL_LESSONS[nextK].lesson.title}</button>` : ''}
+      <button class="btn full" data-act="path">Zum Lernpfad</button>`, {
+      cont: () => { hideModal(); this.start(nextK); },
+      path: () => { hideModal(); this.exit(); }
+    });
+  }
+};
+
 // ---------- Steuerleiste unter dem Brett ----------
 function renderBoardNav() {
   const nav = $('boardNav');
@@ -1509,6 +1885,7 @@ const Home = {
       <div class="actions">
         ${cur ? `<button class="action main" data-act="resume"><div class="ai">▶</div><div><b>Partie fortsetzen</b><span>gegen ${Play.bot.name} · Zug ${Math.ceil(Play.game.moves.length / 2)}</span></div></button>`
         : `<button class="action main" data-act="play"><div class="ai">${BOTS[Play.botIdx].emoji}</div><div><b>Spielen</b><span>gegen ${BOTS[Play.botIdx].name} (ca. ${BOTS[Play.botIdx].elo})</span></div></button>`}
+        ${(() => { const nk = Learn.nextIndex(); return `<button class="action" data-act="learn"><div class="ai">🎓</div><div><b>Lernpfad</b><span>${nk == null ? 'Alles geschafft! Wiederhole Lektionen' : 'Weiter mit: ' + ALL_LESSONS[nk].lesson.title} · ${Object.keys(Learn.st.done).length}/${ALL_LESSONS.length}</span></div></button>`; })()}
         <button class="action" data-act="puzzle"><div class="ai">🧩</div><div><b>Rätsel lösen</b><span>Deine Wertung: ${Math.round(ps.rating)} · Serie 🔥${ps.streak}</span></div></button>
         <button class="action" data-act="analyse" ${last ? '' : 'disabled'}><div class="ai">📈</div><div><b>Letzte Partie analysieren</b><span>${last ? `${esc(last.white)} – ${esc(last.black)}` : 'Noch keine Partie gespielt'}</span></div></button>
       </div>
@@ -1520,8 +1897,8 @@ const Home = {
           <div class="wdl"><div class="w" style="width:${w / tot * 100}%"></div><div class="d" style="width:${d / tot * 100}%"></div><div class="l" style="width:${l / tot * 100}%"></div></div></div>
         <div class="card"><div class="label">Ø Genauigkeit</div><div class="value">${avgAcc}${accs.length ? '<small style="font-size:18px">%</small>' : ''}</div>
           <div class="hint">${accs.length ? `aus deinen letzten ${accs.length} analysierten Partien` : 'Analysiere eine Partie, um sie zu sehen'}</div></div>
-        <div class="card"><div class="label">Beste Rätsel-Serie</div><div class="value">🔥 ${ps.bestStreak}</div>
-          <div class="hint">${ps.tries ? Math.round(100 * ps.solved / ps.tries) : 0}% Erfolgsquote · ${PUZZLES.length} Rätsel verfügbar</div></div>
+        <div class="card"><div class="label">Tage-Serie</div><div class="value">🔥 ${getActivity().streak}</div>
+          <div class="hint">Lerne oder löse jeden Tag ein Rätsel · Rekord ${getActivity().best || 0} · ⚡ ${Learn.st.xp} XP</div></div>
       </div>
       <div style="height:16px"></div>
       <div class="two-col">
@@ -1538,6 +1915,7 @@ const Home = {
       resume: () => switchTab('play'),
       play: () => { Play.setup = true; switchTab('play'); },
       puzzle: () => switchTab('puzzle'),
+      learn: () => switchTab('learn'),
       analyse: () => { Analysis.loadRecord(store.get('games', [])[0]); switchTab('analysis'); },
       bot: i => { Play.botIdx = +i; store.set('botIdx', Play.botIdx); Play.setup = true; switchTab('play'); },
       open: i => { Analysis.loadRecord(store.get('games', [])[+i]); switchTab('analysis'); },
@@ -1556,9 +1934,10 @@ function gameItemHtml(g, i) {
 }
 
 let mode = 'home';
-const modes = { home: Home, play: Play, puzzle: Puzzles, analysis: Analysis };
+const modes = { home: Home, learn: Learn, play: Play, puzzle: Puzzles, analysis: Analysis };
 function switchTab(name) {
   mode = name;
+  if (name !== 'learn') { document.body.classList.remove('learn-mode', 'lesson-mode', 'no-board'); }
   document.body.classList.toggle('home-mode', name === 'home');
   document.querySelectorAll('.tabs button[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
   for (const k of ['play', 'puzzle', 'analysis']) $('panel-' + k).classList.toggle('hidden', k !== name);
@@ -1571,6 +1950,12 @@ function switchTab(name) {
 
 function resize() {
   const wide = window.innerWidth > 980;
+  if (document.body.classList.contains('lesson-mode')) {
+    const w = wide ? window.innerWidth - 210 - 60 : window.innerWidth - 32;
+    const h = window.innerHeight - (wide ? 290 : 250);
+    document.documentElement.style.setProperty('--sq', Math.max(34, Math.min(80, Math.floor(Math.min(w, h) / 8))) + 'px');
+    return;
+  }
   const evalW = $('evalbar') && $('evalbar').style.display === 'none' ? 0 : 36;
   const availW = wide ? window.innerWidth - 210 - 410 - 90 - evalW : window.innerWidth - 32 - evalW;
   const availH = window.innerHeight - 40 - 96;

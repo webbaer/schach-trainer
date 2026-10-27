@@ -1,7 +1,7 @@
 // Offline-Cache: alle Dateien werden beim ersten Öffnen gespeichert.
 // Bei Änderungen an der App VERSION erhöhen, damit Handys die neue Version laden.
-const VERSION = 'schach-v4';
-const FILES = ['./', './index.html', './style.css', './app.js', './engine.js', './puzzles.js', './manifest.webmanifest',
+const VERSION = 'schach-v5';
+const FILES = ['./', './index.html', './style.css', './app.js', './engine.js', './puzzles.js', './lessons.js', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png', './icons/apple-touch-icon.png'];
 
 self.addEventListener('install', e => {
