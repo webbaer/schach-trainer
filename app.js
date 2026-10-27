@@ -526,6 +526,15 @@ function eloFromAccuracy(acc) {
   }
   return 2500;
 }
+// Durchschnittlicher Centipawn-Verlust grob in Elo umrechnen
+function eloFromAcpl(acpl) {
+  const pts = [[0, 2700], [15, 2400], [30, 2000], [50, 1600], [75, 1250], [100, 1000], [125, 800], [150, 650], [200, 450], [300, 300], [400, 250]];
+  for (let k = 1; k < pts.length; k++) if (acpl <= pts[k][0]) {
+    const [a0, e0] = pts[k - 1], [a1, e1] = pts[k];
+    return e0 + (acpl - a0) / (a1 - a0) * (e1 - e0);
+  }
+  return 300;
+}
 const accFromLoss = loss => Math.max(0, Math.min(100, 103.1668 * Math.exp(-0.04354 * loss) - 3.1669));
 
 // ---------- Bots ----------
@@ -567,7 +576,7 @@ const Play = {
 
   // ----- Einstufungspartie -----
   startPlacement() {
-    this.placement = { est: 1000, accs: {}, limit: 25, count: 0 };
+    this.placement = { est: 1000, cpl: {}, count: 0 };
     const prev = this.colorChoice;
     this.colorChoice = 'w';
     this.setup = false;
@@ -578,47 +587,61 @@ const Play = {
     const box = $('placeBox'), P = this.placement;
     if (!box || !P) return;
     const n = P.count || 0;
-    box.innerHTML = `<div class="row"><b>🎯 Einstufungspartie</b><span class="muted small">Zug ${Math.min(n, P.limit)} / ${P.limit}</span></div>
-      <div class="progress"><div style="width:${Math.min(100, n / P.limit * 100)}%"></div></div>
+    let pieces = 0;
+    for (let sq = 0; sq < 128; sq++) { if (sq & 0x88) { sq += 7; continue; } const t = this.game.pos.board[sq] & 7; if (t > 1 && t < 6) pieces++; }
+    const phase = this.game.moves.length < 20 ? 'Eröffnung' : pieces <= 6 ? 'Endspiel' : 'Mittelspiel';
+    box.innerHTML = `<div class="row"><b>🎯 Einstufungspartie</b><span class="muted small">${n} ${n === 1 ? 'Zug' : 'Züge'} bewertet · ${phase}</span></div>
       <div class="place-est"><div><span class="muted small">Deine Stärke (Schätzung)</span><b>~${Math.round(P.est / 10) * 10}</b></div>
       <div><span class="muted small">Bot spielt auf</span><b>~${this.bot.elo}</b></div></div>
-      <div class="muted small">Spiel so gut du kannst – der Bot passt sich nach jedem Zug an. Tipps und Zurücknehmen sind während der Einstufung aus.</div>`;
+      <div class="muted small">Spiel die Partie bis zum Ende – jeder Zug zählt, auch im Endspiel. Der Bot passt sich nach jedem Zug an. Tipps und Zurücknehmen sind während der Einstufung aus.</div>`;
   },
-  placementUpdate(ply, res) {
+
+  // Einstufung über den durchschnittlichen Centipawn-Verlust (ACPL) – Züge in entschiedenen Stellungen zählen nicht
+  placementUpdate(ply, res, evB, evA) {
     const P = this.placement;
     if (!P || this.game.moves[ply].side !== this.userColor || res.cls === 'forced') return;
-    P.accs[ply] = accFromLoss(res.loss);
-    const accs = Object.values(P.accs), n = accs.length;
-    const mean = accs.reduce((a, b) => a + b, 0) / n;
-    const harm = n / accs.reduce((a, b) => a + 1 / Math.max(5, b), 0);
-    // Startannahme 1000 Elo, mit jedem bewerteten Zug zählt die echte Zugqualität mehr
-    const w0 = 6;
-    P.est = Math.max(200, Math.min(2500, (1000 * w0 + eloFromAccuracy((mean + harm) / 2) * n) / (w0 + n)));
+    const cap = v => Math.max(-1000, Math.min(1000, v));
+    const sgn = this.userColor === 0 ? 1 : -1;
+    const before = sgn * cap(evB), after = sgn * cap(evA);
+    if (Math.abs(before) > 600) return;
+    P.cpl = P.cpl || {};
+    P.cpl[ply] = Math.min(400, Math.max(0, before - after));
+    const vals = Object.values(P.cpl), n = vals.length;
+    const acpl = vals.reduce((a, b) => a + b, 0) / n;
+    // Startannahme 900 Elo, mit jedem gezählten Zug zählt die echte Zugqualität mehr
+    const w0 = 4;
+    P.est = Math.max(200, Math.min(2500, (900 * w0 + eloFromAcpl(acpl) * n) / (w0 + n)));
+    P.acpl = acpl;
     P.count = n;
-    if (n >= P.limit && !this.over) this.endPlacementGame();
   },
-  endPlacementGame() {
-    this.over = { result: '*', reason: 'placement' };
-    this.thinking = false;
-    this.token++;
-    engine.cancel();
-    store.set('current', null);
-    this.saveGame();
-    this.refresh(); this.renderPanel();
-    this.showPlacementResult();
-  },
-  async showPlacementResult() {
+
+  async showPlacementResult(midgame) {
     const P = this.placement;
+    if (!P || P.finishing) return;
+    P.finishing = true;
     // auf die Bewertung der letzten Züge warten
     for (let i = 0; i < 40 && this.live.cls.length < this.game.moves.length; i++) await sleep(150);
     let elo = P.est;
-    const r = this.over.result;
-    const won = (r === '1-0' && this.userColor === 0) || (r === '0-1' && this.userColor === 1);
-    if (r !== '*' && r !== '1/2-1/2') elo += won ? 150 : -150;
-    if ((P.count || 0) < 5) elo = Math.min(elo, 600);
+    if (midgame) {
+      // Partie läuft noch: klarer Vorteil oder Nachteil zählt etwas mit
+      const ev = this.live.evals[this.live.evals.length - 1] || 0;
+      const mine = this.userColor === 0 ? ev : -ev;
+      if (mine > 300) elo += 100; else if (mine < -300) elo -= 100;
+    } else {
+      const r = this.over.result;
+      const won = (r === '1-0' && this.userColor === 0) || (r === '0-1' && this.userColor === 1);
+      const myMoves = this.game.moves.filter(m => m.side === this.userColor).length;
+      if (r !== '*' && r !== '1/2-1/2') elo += won ? 150 : (myMoves < 20 ? -250 : -150);
+    }
+    // Sehr kurze Partie: wenig Aussagekraft – bei schneller Niederlage eher vorsichtig einstufen
+    if ((P.count || 0) < 5) {
+      const r = this.over && this.over.result;
+      const lost = r && r !== '1/2-1/2' && r !== '*' && !((r === '1-0') === (this.userColor === 0));
+      elo = Math.min(elo, lost ? 400 : 600);
+    }
     elo = Math.round(Math.max(200, Math.min(2500, elo)) / 50) * 50;
     // Lernpfad: Kapitel bis zum Niveau freischalten
-    const units = elo < 450 ? 0 : elo < 600 ? 2 : elo < 800 ? 3 : elo < 1000 ? 5 : elo < 1200 ? 6 : elo < 1400 ? 8 : elo < 1600 ? 9 : elo < 1800 ? 10 : elo < 2000 ? 11 : LESSONS.length;
+    const units = elo < 500 ? 0 : elo < 700 ? 2 : elo < 900 ? 3 : elo < 1100 ? 4 : elo < 1300 ? 6 : elo < 1500 ? 8 : elo < 1700 ? 9 : elo < 1900 ? 10 : elo < 2100 ? 11 : LESSONS.length;
     Learn.st.start = 'placed';
     Learn.st.placementElo = elo;
     Learn.markUnitsDone(units);
@@ -627,6 +650,8 @@ const Play = {
     BOTS.forEach((b, i) => { if (!b.human && b.elo <= elo) bi = i; });
     this.placement = null;
     this.botIdx = bi; store.set('botIdx', bi);
+    this.persist();
+    this.renderPanel();
     markActivity();
     const g = OPENING_GROUPS.find(x => elo >= x.min && elo < x.max) || OPENING_GROUPS[0];
     const nextU = LESSONS[Math.min(units, LESSONS.length - 1)];
@@ -640,9 +665,13 @@ const Play = {
         ${Puzzles.st.tries ? '' : `<div>🧩 <b>Rätsel-Wertung:</b> startet bei ${elo}</div>`}
       </div>
       <p class="muted small">Die Schätzung beruht auf der Qualität deiner Züge (von der Engine bewertet) und dem Ergebnis. Mit jeder weiteren Partie wird dein Bild genauer.</p>
-      <button class="btn primary full" data-act="learn">🎓 Zum Lernpfad</button>
+      ${midgame ? `<p class="small">Die Partie ist noch nicht vorbei – du spielst sie jetzt gegen ${BOTS[bi].emoji} <b>${BOTS[bi].name}</b> zu Ende.</p>
+      <button class="btn primary full" data-act="cont">♟ Partie zu Ende spielen</button>
+      <button class="btn full" data-act="learn">🎓 Zum Lernpfad (Partie bleibt gespeichert)</button>`
+      : `<button class="btn primary full" data-act="learn">🎓 Zum Lernpfad</button>
       <button class="btn full" data-act="analyse">📈 Partie analysieren</button>
-      <button class="btn full" data-act="play">♟ Gegen ${BOTS[bi].name} spielen</button>`, {
+      <button class="btn full" data-act="play">♟ Gegen ${BOTS[bi].name} spielen</button>`}`, {
+      cont: () => { hideModal(); this.refresh(); this.renderPanel(); this.maybeBot(); },
       learn: () => { hideModal(); switchTab('learn'); },
       analyse: () => { hideModal(); Analysis.loadRecord(this.lastRecord); switchTab('analysis'); },
       play: () => { hideModal(); this.start(); }
@@ -701,7 +730,7 @@ const Play = {
         if (i > 0) {
           const res = classifyMove(g.positionAt(i - 1), g.moves[i - 1].uci, L.evals[i - 1], L.evals[i], L.best[i - 1], L.cls[i - 2]);
           L.cls[i - 1] = res.cls;
-          if (this.placement) { this.placementUpdate(i - 1, res); if (mode === 'play') this.renderPlacementBox(); }
+          if (this.placement) { this.placementUpdate(i - 1, res, L.evals[i - 1], L.evals[i]); if (mode === 'play') this.renderPlacementBox(); }
           const mine = this.bot.human || g.moves[i - 1].side === this.userColor;
           if (mine && i === g.moves.length && mode === 'play') {
             if (res.cls === 'brilliant') Sound.play('brilliant');
