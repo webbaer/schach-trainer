@@ -538,3 +538,11 @@ body.openings-mode .board-area, body.openings-mode .panel { display: none; }
 .pc-uni { font-size: 34px; line-height: 40px; width: 40px; color: #fff; -webkit-text-stroke: 1px #222; font-family: "Apple Symbols", "Segoe UI Symbol", serif; }
 .pc-uni.b { color: #222; -webkit-text-stroke: 0; }
 .modal-box:has(.pc-grid) { width: 460px; }
+
+/* ---------- Einstufungspartie ---------- */
+.place-box { background: linear-gradient(135deg, rgba(214, 69, 96, .18), rgba(214, 69, 96, .04)); border: 1px solid rgba(214, 69, 96, .45); border-radius: 12px; padding: 12px; margin: 8px 0; }
+.place-est { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 6px 0; }
+.place-est > div { background: var(--bg); border-radius: 10px; padding: 8px; text-align: center; }
+.place-est span { display: block; }
+.place-est b { font-size: 24px; }
+.place-list { text-align: left; display: flex; flex-direction: column; gap: 6px; background: var(--bg); border-radius: 12px; padding: 12px; margin: 8px 0; font-size: 14px; }

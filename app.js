@@ -232,6 +232,7 @@ function parsePgn(text) {
 }
 
 const STATUS_TEXT = {
+  placement: 'Einstufung beendet',
   checkmate: 'Schachmatt', stalemate: 'Patt', insufficient: 'Ungenügendes Material',
   fifty: '50-Züge-Regel', repetition: 'Dreifache Stellungswiederholung', resign: 'Aufgabe'
 };
@@ -507,6 +508,17 @@ function setStrip(where, info) {
     (info.thinking ? '<div class="thinking">denkt nach …</div>' : '');
 }
 
+// Genauigkeit (0–100) grob in Elo umrechnen
+function eloFromAccuracy(acc) {
+  const pts = [[0, 200], [50, 400], [70, 1000], [80, 1400], [90, 1900], [95, 2200], [100, 2500]];
+  for (let k = 1; k < pts.length; k++) if (acc <= pts[k][0]) {
+    const [a0, e0] = pts[k - 1], [a1, e1] = pts[k];
+    return e0 + (acc - a0) / (a1 - a0) * (e1 - e0);
+  }
+  return 2500;
+}
+const accFromLoss = loss => Math.max(0, Math.min(100, 103.1668 * Math.exp(-0.04354 * loss) - 3.1669));
+
 // ---------- Bots ----------
 const BOTS = [
   { name: 'Bruno', emoji: '🐣', elo: 400, depth: 1, noise: 400, blunder: 0.3, desc: 'Lernt gerade die Regeln' },
@@ -531,11 +543,102 @@ const Play = {
   init() {
     const cur = store.get('current', null);
     if (cur && cur.moves) {
-      this.botIdx = cur.botIdx; this.userColor = cur.userColor;
+      this.botIdx = cur.botIdx; this.userColor = cur.userColor; this.placement = cur.placement || null;
       this.game = Game.fromUci(cur.startFen, cur.moves);
     }
   },
-  get bot() { return BOTS[this.botIdx]; },
+  get bot() {
+    if (!this.placement) return BOTS[this.botIdx];
+    // Adaptiver Bot: übernimmt die Einstellungen des Bots, dessen Elo der aktuellen Schätzung am nächsten liegt
+    const elo = this.placement.est;
+    let near = BOTS[0];
+    for (const b of BOTS) if (!b.human && Math.abs(b.elo - elo) < Math.abs(near.elo - elo)) near = b;
+    return Object.assign({}, near, { name: 'Adaptiver Bot', emoji: '🎯', elo: Math.round(elo / 10) * 10, desc: 'Passt sich deiner Stärke an' });
+  },
+
+  // ----- Einstufungspartie -----
+  startPlacement() {
+    this.placement = { est: 1000, accs: {}, limit: 25, count: 0 };
+    const prev = this.colorChoice;
+    this.colorChoice = 'w';
+    this.setup = false;
+    this.start();
+    this.colorChoice = prev;
+  },
+  renderPlacementBox() {
+    const box = $('placeBox'), P = this.placement;
+    if (!box || !P) return;
+    const n = P.count || 0;
+    box.innerHTML = `<div class="row"><b>🎯 Einstufungspartie</b><span class="muted small">Zug ${Math.min(n, P.limit)} / ${P.limit}</span></div>
+      <div class="progress"><div style="width:${Math.min(100, n / P.limit * 100)}%"></div></div>
+      <div class="place-est"><div><span class="muted small">Deine Stärke (Schätzung)</span><b>~${Math.round(P.est / 10) * 10}</b></div>
+      <div><span class="muted small">Bot spielt auf</span><b>~${this.bot.elo}</b></div></div>
+      <div class="muted small">Spiel so gut du kannst – der Bot passt sich nach jedem Zug an. Tipps und Zurücknehmen sind während der Einstufung aus.</div>`;
+  },
+  placementUpdate(ply, res) {
+    const P = this.placement;
+    if (!P || this.game.moves[ply].side !== this.userColor || res.cls === 'forced') return;
+    P.accs[ply] = accFromLoss(res.loss);
+    const accs = Object.values(P.accs), n = accs.length;
+    const mean = accs.reduce((a, b) => a + b, 0) / n;
+    const harm = n / accs.reduce((a, b) => a + 1 / Math.max(5, b), 0);
+    // Startannahme 1000 Elo, mit jedem bewerteten Zug zählt die echte Zugqualität mehr
+    const w0 = 6;
+    P.est = Math.max(200, Math.min(2500, (1000 * w0 + eloFromAccuracy((mean + harm) / 2) * n) / (w0 + n)));
+    P.count = n;
+    if (n >= P.limit && !this.over) this.endPlacementGame();
+  },
+  endPlacementGame() {
+    this.over = { result: '*', reason: 'placement' };
+    this.thinking = false;
+    this.token++;
+    engine.cancel();
+    store.set('current', null);
+    this.saveGame();
+    this.refresh(); this.renderPanel();
+    this.showPlacementResult();
+  },
+  async showPlacementResult() {
+    const P = this.placement;
+    // auf die Bewertung der letzten Züge warten
+    for (let i = 0; i < 40 && this.live.cls.length < this.game.moves.length; i++) await sleep(150);
+    let elo = P.est;
+    const r = this.over.result;
+    const won = (r === '1-0' && this.userColor === 0) || (r === '0-1' && this.userColor === 1);
+    if (r !== '*' && r !== '1/2-1/2') elo += won ? 150 : -150;
+    if ((P.count || 0) < 5) elo = Math.min(elo, 600);
+    elo = Math.round(Math.max(200, Math.min(2500, elo)) / 50) * 50;
+    // Lernpfad: Kapitel bis zum Niveau freischalten
+    const units = elo < 450 ? 0 : elo < 600 ? 2 : elo < 800 ? 3 : elo < 1000 ? 5 : elo < 1200 ? 6 : elo < 1400 ? 8 : elo < 1600 ? 9 : elo < 1800 ? 10 : elo < 2000 ? 11 : LESSONS.length;
+    Learn.st.start = 'placed';
+    Learn.st.placementElo = elo;
+    Learn.markUnitsDone(units);
+    if (!Puzzles.st.tries) { Puzzles.st.rating = elo; Puzzles.st.peak = elo; Puzzles.st.hist = [elo]; Puzzles.save(); }
+    let bi = 0;
+    BOTS.forEach((b, i) => { if (!b.human && b.elo <= elo) bi = i; });
+    this.placement = null;
+    this.botIdx = bi; store.set('botIdx', bi);
+    markActivity();
+    const g = OPENING_GROUPS.find(x => elo >= x.min && elo < x.max) || OPENING_GROUPS[0];
+    const nextU = LESSONS[Math.min(units, LESSONS.length - 1)];
+    Sound.play('end');
+    showModal(`<div style="font-size:54px">🎯</div><h2>Deine Einstufung</h2>
+      <div class="xp-gain" style="font-size:40px">~${elo} Elo</div>
+      <div class="place-list">
+        <div>🎓 <b>Lernpfad:</b> ${units === 0 ? 'Start ganz am Anfang' : units >= LESSONS.length ? 'alle Kapitel freigeschaltet' : `Einstieg bei Kapitel ${units + 1} „${nextU.title}“`}</div>
+        <div>♟ <b>Passender Gegner:</b> ${BOTS[bi].emoji} ${BOTS[bi].name} (ca. ${BOTS[bi].elo})</div>
+        <div>📖 <b>Eröffnungen:</b> ${g.icon} ${g.name} (${g.range})</div>
+        ${Puzzles.st.tries ? '' : `<div>🧩 <b>Rätsel-Wertung:</b> startet bei ${elo}</div>`}
+      </div>
+      <p class="muted small">Die Schätzung beruht auf der Qualität deiner Züge (von der Engine bewertet) und dem Ergebnis. Mit jeder weiteren Partie wird dein Bild genauer.</p>
+      <button class="btn primary full" data-act="learn">🎓 Zum Lernpfad</button>
+      <button class="btn full" data-act="analyse">📈 Partie analysieren</button>
+      <button class="btn full" data-act="play">♟ Gegen ${BOTS[bi].name} spielen</button>`, {
+      learn: () => { hideModal(); switchTab('learn'); },
+      analyse: () => { hideModal(); Analysis.loadRecord(this.lastRecord); switchTab('analysis'); },
+      play: () => { hideModal(); this.start(); }
+    });
+  },
 
   activate() {
     board.setFlipped(this.bot.human ? board.flipped : this.userColor === 1);
@@ -560,7 +663,7 @@ const Play = {
 
   persist() {
     if (!this.game || this.over) { store.set('current', null); return; }
-    store.set('current', { botIdx: this.botIdx, userColor: this.userColor, startFen: this.game.startFen, moves: this.game.uci() });
+    store.set('current', { botIdx: this.botIdx, userColor: this.userColor, startFen: this.game.startFen, moves: this.game.uci(), placement: this.placement });
   },
 
   isUserTurn() { return this.game && !this.over && (this.bot.human || this.game.pos.side === this.userColor); },
@@ -568,7 +671,7 @@ const Play = {
   // ----- Live-Zugbewertung (läuft parallel zum Bot im Analyse-Worker) -----
   resetLive() { this.liveToken++; this.live = { evals: [], best: [], cls: [] }; },
   liveAnalyse() {
-    if (!this.showLive || !this.game || this.liveLoop === this.liveToken) return;
+    if ((!this.showLive && !this.placement) || !this.game || this.liveLoop === this.liveToken) return;
     this.liveLoop = this.liveToken;
     this.liveRun(this.liveToken);
   },
@@ -576,7 +679,7 @@ const Play = {
     try {
       for (;;) {
         const g = this.game, L = this.live;
-        if (!g || tok !== this.liveToken || !this.showLive) return;
+        if (!g || tok !== this.liveToken || (!this.showLive && !this.placement)) return;
         const i = L.evals.length;
         if (i > g.moves.length) return;
         const pos = g.positionAt(i), st = pos.status();
@@ -589,6 +692,7 @@ const Play = {
         if (i > 0) {
           const res = classifyMove(g.positionAt(i - 1), g.moves[i - 1].uci, L.evals[i - 1], L.evals[i], L.best[i - 1], L.cls[i - 2]);
           L.cls[i - 1] = res.cls;
+          if (this.placement) { this.placementUpdate(i - 1, res); if (mode === 'play') this.renderPlacementBox(); }
           const mine = this.bot.human || g.moves[i - 1].side === this.userColor;
           if (mine && i === g.moves.length && mode === 'play') {
             if (res.cls === 'brilliant') Sound.play('brilliant');
@@ -724,6 +828,7 @@ const Play = {
     this.refresh(true);
     this.renderPanel();
     Sound.play('end');
+    if (this.placement) { this.showPlacementResult(); return; }
     const userWon = !this.bot.human && ((result === '1-0' && this.userColor === 0) || (result === '0-1' && this.userColor === 1));
     const userLost = !this.bot.human && result !== '1/2-1/2' && !userWon;
     const title = this.bot.human ? (result === '1-0' ? 'Weiß gewinnt' : result === '0-1' ? 'Schwarz gewinnt' : 'Remis') :
@@ -747,7 +852,7 @@ const Play = {
     this.saved = true;
     const b = this.bot;
     const rec = {
-      id: Date.now(), date: Date.now(), bot: this.botIdx,
+      id: Date.now(), date: Date.now(), bot: this.placement ? null : this.botIdx,
       white: b.human ? 'Weiß' : this.userColor === 0 ? 'Du' : `${b.name} (${b.elo})`,
       black: b.human ? 'Schwarz' : this.userColor === 1 ? 'Du' : `${b.name} (${b.elo})`,
       result: this.over.result, reason: this.over.reason, userColor: b.human ? null : this.userColor,
@@ -825,12 +930,13 @@ const Play = {
         <div class="seg">${[['w', '♔ Weiß'], ['r', '🎲 Zufall'], ['b', '♚ Schwarz']].map(([k, l]) => `<button class="${this.colorChoice === k ? 'active' : ''}" data-act="color" data-arg="${k}">${l}</button>`).join('')}</div>
         <div style="height:16px"></div>
         <button class="btn primary full" data-act="start">▶ Spielen gegen ${this.bot.name}</button>
-        <button class="btn small" style="margin-top:8px" data-act="pieces">🎨 Figuren ändern</button>
+        <div class="btn-row"><button class="btn small" data-act="place">🎯 Einstufungspartie</button><button class="btn small" data-act="pieces">🎨 Figuren ändern</button></div>
         ${this.game && this.setup ? '<button class="btn full" style="margin-top:8px" data-act="back">Zurück zur laufenden Partie</button>' : ''}`;
       bind(p, {
         bot: i => { this.botIdx = +i; store.set('botIdx', this.botIdx); this.renderPanel(); if (!this.game) this.refresh(); },
         color: c => { this.colorChoice = c; store.set('colorChoice', c); this.renderPanel(); },
-        start: () => { this.setup = false; this.start(); },
+        start: () => { this.setup = false; this.placement = null; this.start(); },
+        place: () => this.startPlacement(),
         pieces: () => openPieceChooser(),
         back: () => { this.setup = false; this.renderPanel(); }
       });
@@ -841,12 +947,13 @@ const Play = {
     const status = this.over ? `<b>${STATUS_TEXT[this.over.reason]}</b> · ${this.over.result}` :
       this.thinking ? `${b.emoji} ${b.name} denkt nach …` : this.isUserTurn() ? `<b>${turn}</b> ist am Zug${this.game.pos.inCheck() ? ' – <b style="color:var(--accent2)">Schach!</b>' : ''}` : '';
     p.innerHTML = `<div class="panel-head"><div class="big-ic">${b.emoji}</div><div><h2>${b.human ? 'Partie zu zweit' : 'gegen ' + b.name}</h2><div class="muted">${b.human ? 'Ein Gerät, zwei Spieler' : 'ca. ' + b.elo + ' Elo · ' + esc(b.desc)}</div></div></div>
+      ${this.placement ? '<div class="place-box" id="placeBox"></div>' : ''}
       <div class="status-box" id="playStatus">${status}</div>
       <div class="live-box" id="liveBox"></div>
       <div class="movelist" id="playMoves"></div>
       <div class="btn-row">
-        <button class="btn" data-act="hint" ${this.over ? 'disabled' : ''}>💡 Tipp</button>
-        <button class="btn" data-act="undo">↶ Zurück</button>
+        <button class="btn" data-act="hint" ${this.over || this.placement ? 'disabled' : ''}>💡 Tipp</button>
+        <button class="btn" data-act="undo" ${this.placement ? 'disabled' : ''}>↶ Zurück</button>
         <button class="btn" data-act="flip">⇅ Drehen</button>
         <button class="btn danger" data-act="resign" ${this.over ? 'disabled' : ''}>🏳 Aufgeben</button>
       </div>
@@ -874,6 +981,7 @@ const Play = {
     };
     this.renderMoves();
     this.renderLiveBox();
+    this.renderPlacementBox();
   }
 };
 
@@ -1538,7 +1646,7 @@ const Learn = {
       </div>
       <div class="learn-actions">
         <button class="btn primary" data-act="mix" ${canMix ? '' : 'disabled'}>🔁 Übungs-Mix</button>
-        <button class="btn" data-act="placement">🎯 Einstufungstest</button>
+        <button class="btn" data-act="placement">🎯 Einstufungspartie</button>
       </div>`;
     let lastUi = -1;
     ALL_LESSONS.forEach((x, k) => {
@@ -1569,7 +1677,7 @@ const Learn = {
     bind($('learn'), {
       open: k => this.start(+k),
       mix: () => this.startMix(),
-      placement: () => { if (doneCount === 0 || confirm('Einstufungstest starten? Bestandene Kapitel werden freigeschaltet.')) this.startPlacement(); },
+      placement: () => { if (doneCount === 0 || confirm('Einstufungspartie starten? Danach werden die Kapitel bis zu deinem Niveau freigeschaltet.')) this.startPlacement(); },
       jump: ui => this.startJump(+ui)
     });
     const cur = $('learn').querySelector('.node.current');
@@ -1582,7 +1690,7 @@ const Learn = {
       <h1>Willkommen beim Lernpfad!</h1>
       <p class="muted">Wie viel kannst du schon? Wähle deinen Start.</p>
       <button class="ob-card" data-act="begin"><div class="ob-ic">🌱</div><div><b>Von Anfang an</b><span>Ich lerne Schach neu – vom Brett über die Figuren bis zum Matt.</span></div></button>
-      <button class="ob-card" data-act="test"><div class="ob-ic">🎯</div><div><b>Einstufungstest</b><span>Ich kann schon etwas. Ein adaptiver Test findet heraus, wo ich einsteige – die Fragen werden schwerer, bis es knifflig wird.</span></div></button>
+      <button class="ob-card" data-act="test"><div class="ob-ic">🎯</div><div><b>Einstufungspartie</b><span>Ich kann schon spielen. Eine Partie gegen einen adaptiven Bot, der sich meiner Stärke anpasst – danach weiß die App, wo ich einsteige.</span></div></button>
     </div>`;
     bind($('learn'), {
       begin: () => { this.st.start = 'begin'; this.save(); this.renderPath(); },
@@ -1604,7 +1712,7 @@ const Learn = {
   },
   begin(session, k, unit) {
     this.k = k; this.lesson = session; this.unit = unit || null; this.idx = 0; this.mistakes = 0;
-    this.isTest = session.kind === 'placement' || session.kind === 'jump';
+    this.isTest = session.kind === 'jump';
     this.setMode('lesson');
     this.startStep();
   },
@@ -1622,11 +1730,7 @@ const Learn = {
     if (!steps.length) return;
     this.begin({ kind: 'mix', id: 'mix', title: 'Übungs-Mix', icon: '🔁', steps }, null);
   },
-  startPlacement() {
-    this.place = { ui: 0, asked: 0, passed: 0 };
-    this.begin({ kind: 'placement', id: 'placement', title: 'Einstufungstest', icon: '🎯', steps: this.placementSteps(0) }, null);
-  },
-  placementSteps(ui) { return shuffle(unitSteps(LESSONS[ui], TEST_TYPES)).slice(0, 2); },
+  startPlacement() { switchTab('play'); Play.startPlacement(); },
   startJump(ui) {
     const before = LESSONS.slice(0, ui).filter(u => u.lessons.some(l => this.st.done[l.id] == null));
     const pool = shuffle(before.flatMap(u => shuffle(unitSteps(u, TEST_TYPES)).slice(0, 3)));
@@ -1711,12 +1815,12 @@ const Learn = {
   renderBar() {
     const st = this.step, n = this.lesson.steps.length;
     $('lessonTop').innerHTML = `<button class="lt-close" data-act="close" title="Lektion verlassen">✕</button>
-      <div class="lt-prog"><div style="width:${this.lesson.kind === 'placement' ? Math.round(this.place.ui / LESSONS.length * 100) : Math.round(this.idx / n * 100)}%"></div></div>
+      <div class="lt-prog"><div style="width:${Math.round(this.idx / n * 100)}%"></div></div>
       <div class="lt-title">${this.lesson.icon} ${this.lesson.title}</div>`;
     bind($('lessonTop'), { close: () => { if (this.idx === 0 || confirm('Lektion verlassen? Dein Fortschritt in dieser Lektion geht verloren.')) this.exit(); } });
 
     const typeLabel = { info: '📖 Lernen', quiz: '❓ Frage', collect: '⭐ Sammeln', move: '🎯 Finde den Zug', check: '⚡ Schach geben', mate: '👑 Matt in 1', any: '🛡️ Rette den König', line: '⚔️ Taktik', playmate: '🏆 Prüfung', promote: '👑 Umwandeln' }[st.t];
-    const testInfo = this.lesson.kind === 'placement' ? ` · Kapitel ${this.place.ui + 1}: ${LESSONS[this.place.ui].title}` : this.isTest ? ` · Frage ${this.idx + 1}/${n}` : '';
+    const testInfo = this.isTest ? ` · Frage ${this.idx + 1}/${n}` : '';
     let html = `<div class="lb-type">${typeLabel}${testInfo}</div><div class="lb-text">${mdText(st.t === 'quiz' ? st.q : st.text)}</div>`;
     if (st.t === 'quiz') {
       html += `<div class="lb-opts">${st.opts.map((o, i) => {
@@ -1726,7 +1830,7 @@ const Learn = {
     }
     if (st.t === 'playmate' || st.t === 'promote') html += `<div class="lb-count">Zug ${this.userMoves} von ${st.max}</div>`;
     if (this.fb) html += `<div class="lb-fb ${this.fb.ok ? 'ok' : 'bad'}"><b>${this.fb.title}</b>${this.fb.text ? ' ' + mdText(this.fb.text) : ''}</div>`;
-    if (this.solved) html += `<button class="btn primary full lb-next" data-act="next">${this.idx + 1 >= n && this.lesson.kind !== 'placement' ? 'Abschließen' : 'Weiter'}</button>`;
+    if (this.solved) html += `<button class="btn primary full lb-next" data-act="next">${this.idx + 1 >= n ? 'Abschließen' : 'Weiter'}</button>`;
     else if (this.fb && !this.fb.ok && this.fb.retry) html += `<button class="btn full" data-act="retry">↻ Nochmal versuchen</button>`;
     else if (!this.isTest && ['move', 'line', 'mate', 'check'].includes(st.t)) html += `<button class="btn small lb-skip" data-act="hint">💡 Tipp</button>`;
     $('lessonBar').innerHTML = html;
@@ -1917,34 +2021,10 @@ const Learn = {
   },
 
   next() {
-    if (this.lesson.kind === 'placement') {
-      // Adaptiv: zwei richtige Antworten pro Kapitel → nächstes (schwereres) Kapitel, ein Fehler → Ende
-      const P = this.place;
-      if (this.stepFailed) { this.finishPlacement(); return; }
-      P.asked++;
-      if (P.asked >= 2) {
-        P.passed = P.ui + 1; P.ui++; P.asked = 0;
-        if (P.ui >= LESSONS.length) { this.finishPlacement(); return; }
-        this.lesson.steps.push(...this.placementSteps(P.ui));
-      }
-      this.idx++; this.startStep(); return;
-    }
     if (this.lesson.kind === 'jump' && this.mistakes > 1) { this.finishJump(false); return; }
     if (this.idx + 1 < this.lesson.steps.length) { this.idx++; this.startStep(); return; }
     if (this.lesson.kind === 'jump') { this.finishJump(true); return; }
     this.finish();
-  },
-
-  finishPlacement() {
-    const passed = this.place.passed;
-    this.st.start = 'placed';
-    this.markUnitsDone(passed);
-    markActivity();
-    Sound.play(passed ? 'end' : 'good');
-    const u = LESSONS[Math.min(passed, LESSONS.length - 1)];
-    showModal(`<div style="font-size:54px">🎯</div><h2>Einstufung fertig!</h2>
-      <p>${passed === 0 ? 'Du startest ganz am Anfang – perfekt, um alles sauber zu lernen.' : passed >= LESSONS.length ? 'Wow – du hast alle Kapitel bestanden! Der Übungs-Mix hält dich fit.' : `Du hast <b>${passed} ${passed === 1 ? 'Kapitel' : 'Kapitel'}</b> übersprungen und startest bei<br><b>Kapitel ${passed + 1}: ${u.title}</b>.`}</p>
-      <button class="btn primary full" data-act="ok">Zum Lernpfad</button>`, { ok: () => { hideModal(); this.exit(); } });
   },
 
   finishJump(ok) {
