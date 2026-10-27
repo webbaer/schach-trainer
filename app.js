@@ -253,6 +253,13 @@ const pieceHtml = p => pieceSet === 'unicode'
   ? `<span class="piece ${p >> 3 ? 'b' : 'w'}">${GLYPH[p & 7]}︎</span>`
   : `<img class="piece piece-img" src="${pieceSrc(pieceSet, p)}" alt="" draggable="false">`;
 
+const preloaded = [];
+function preloadPieces(set) {
+  if (set === 'unicode') return;
+  for (const p of [1, 2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 14]) { const img = new Image(); img.src = pieceSrc(set, p); preloaded.push(img); }
+}
+preloadPieces(pieceSet);
+
 function openPieceChooser() {
   const prev = s => s.id === 'unicode'
     ? `<span class="pc-uni">${GLYPH[2]}︎</span><span class="pc-uni b">${GLYPH[5]}︎</span>`
@@ -260,7 +267,7 @@ function openPieceChooser() {
   showModal(`<h2>🎨 Figuren</h2><div class="pc-grid">${PIECE_SETS.map(s => `<button class="pc ${s.id === pieceSet ? 'active' : ''}" data-act="pick" data-arg="${s.id}"><div class="pc-prev">${prev(s)}</div>${s.name}</button>`).join('')}</div>
     <button class="btn primary full" data-act="close">Fertig</button>
     <p class="muted small" style="margin-bottom:0">Figuren von lichess.org-Künstlern unter freien Lizenzen (GPL, MIT, Apache, CC) – Details in pieces/LIZENZEN.md.</p>`, {
-    pick: id => { pieceSet = id; store.set('pieceSet', id); board.render(); openPieceChooser(); },
+    pick: id => { pieceSet = id; store.set('pieceSet', id); preloadPieces(id); board.render(); openPieceChooser(); },
     close: () => { hideModal(); if (mode === 'home') Home.render(); }
   });
 }
@@ -330,8 +337,10 @@ class Board {
       if (row === 7) html += `<span class="coord file">${'abcdefgh'[sq & 7]}</span>`;
       if (o.stars && o.stars.includes(sq)) html += '<span class="star">⭐</span>';
       if (o.badge && o.badge.sq === sq) html += `<span class="badge" style="background:${o.badge.color}">${o.badge.sym}</span>`;
-      d.innerHTML = html;
-      if (sq === this.dragFrom && this.dragging && d.firstChild) d.firstChild.classList.add('dragging');
+      // nur ändern, wenn sich der Inhalt wirklich geändert hat – so bleiben die Figurenbilder stehen
+      if (d._html !== html) { d.innerHTML = html; d._html = html; }
+      const pe = d.firstChild;
+      if (pe && pe.classList && pe.classList.contains('piece')) pe.classList.toggle('dragging', sq === this.dragFrom && !!this.dragging);
     }
     this.wrap.classList.toggle('movable', this.movable >= 0);
     this.drawArrows(o.arrows || []);
@@ -2446,15 +2455,16 @@ function switchTab(name) {
 }
 
 function resize() {
-  const wide = window.innerWidth > 980;
+  const vw = Math.min(window.innerWidth, document.documentElement.clientWidth || window.innerWidth);
+  const wide = vw > 980;
   if (document.body.classList.contains('lesson-mode')) {
-    const w = wide ? window.innerWidth - 210 - 60 : window.innerWidth - 32;
+    const w = wide ? vw - 210 - 60 : vw - 32;
     const h = window.innerHeight - (wide ? 290 : 250);
     document.documentElement.style.setProperty('--sq', Math.max(34, Math.min(80, Math.floor(Math.min(w, h) / 8))) + 'px');
     return;
   }
   const evalW = $('evalbar') && $('evalbar').style.display === 'none' ? 0 : 36;
-  const availW = wide ? window.innerWidth - 210 - 410 - 90 - evalW : window.innerWidth - 32 - evalW;
+  const availW = wide ? vw - 210 - 410 - 90 - evalW : vw - 32 - evalW;
   const availH = window.innerHeight - 40 - 96;
   let sq = Math.floor(Math.min(availW, wide ? availH : availW * 1.5) / 8);
   sq = Math.max(34, Math.min(sq, 96));

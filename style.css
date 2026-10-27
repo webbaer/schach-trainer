@@ -546,3 +546,14 @@ body.openings-mode .board-area, body.openings-mode .panel { display: none; }
 .place-est span { display: block; }
 .place-est b { font-size: 24px; }
 .place-list { text-align: left; display: flex; flex-direction: column; gap: 6px; background: var(--bg); border-radius: 12px; padding: 12px; margin: 8px 0; font-size: 14px; }
+
+/* ---------- Stabiles Layout: Leisten am Brett dürfen das Brett nie verbreitern ---------- */
+.board-area > :not(.board-row) { width: 0; min-width: 100%; }
+.player-strip { overflow: hidden; white-space: nowrap; }
+.player-strip .captured { overflow: hidden; text-overflow: clip; min-width: 0; }
+.board-nav .nav-info b { overflow: hidden; text-overflow: ellipsis; }
+.board-nav .pill { flex: none; }
+@media (max-width: 980px) {
+  html, body { overflow-x: hidden; }
+  .board-nav .pill { display: none; }
+}
