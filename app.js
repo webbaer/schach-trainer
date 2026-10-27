@@ -501,7 +501,7 @@ const BOTS = [
 const Play = {
   game: null, botIdx: store.get('botIdx', 3), colorChoice: store.get('colorChoice', 'w'), userColor: 0,
   thinking: false, over: null, token: 0, viewPly: null, showEval: store.get('showEval', false), hint: null, saved: false,
-  showLive: store.get('liveCls', true), live: { evals: [], best: [], cls: [] }, liveToken: 0, liveLoop: null,
+  botDelay: store.get('botDelay', 1300), showLive: store.get('liveCls', true), live: { evals: [], best: [], cls: [] }, liveToken: 0, liveLoop: null,
 
   init() {
     const cur = store.get('current', null);
@@ -672,7 +672,8 @@ const Play = {
     const t0 = Date.now();
     const b = this.bot;
     const r = await engine.request({ cmd: 'bot', fen: this.game.startFen, moves: this.game.uci(), level: { depth: b.depth, noise: b.noise, blunder: b.blunder, time: b.time } });
-    const wait = 450 + Math.random() * 400 - (Date.now() - t0);
+    // Bedenkzeit des Bots: mindestens die eingestellte Pause, leicht zufällig
+    const wait = this.botDelay * (0.8 + Math.random() * 0.4) - (Date.now() - t0);
     if (wait > 0) await sleep(wait);
     if (tok !== this.token) return;
     this.thinking = false;
@@ -829,12 +830,15 @@ const Play = {
       </div>
       <label class="chk"><input type="checkbox" id="liveChk" ${this.showLive ? 'checked' : ''}> Züge live bewerten (Brillant, Patzer …)</label>
       <label class="chk"><input type="checkbox" id="evalChk" ${this.showEval ? 'checked' : ''}> Bewertungsbalken anzeigen</label>
+      ${b.human ? '' : `<div class="row" style="margin-top:6px"><span class="muted small">Bot-Tempo</span>
+        <div class="seg" style="flex:0 0 230px">${[[400, 'Schnell'], [1300, 'Normal'], [2600, 'Langsam']].map(([v, l]) => `<button class="${this.botDelay === v ? 'active' : ''}" data-act="delay" data-arg="${v}">${l}</button>`).join('')}</div></div>`}
       <div style="height:10px"></div>
       ${this.over ? '<button class="btn primary full" data-act="analyse">📈 Partie analysieren</button><div style="height:6px"></div>' : ''}
       <div class="btn-row"><button class="btn" data-act="new">＋ Neues Spiel</button><button class="btn" data-act="pgn">📋 PGN</button></div>`;
     bind(p, {
       first: () => this.view(0), prev: () => this.nav(-1), next: () => this.nav(1), last: () => this.view(1e9),
       hint: () => this.getHint(), undo: () => this.takeback(), resign: () => this.resign(),
+      delay: v => { this.botDelay = +v; store.set('botDelay', this.botDelay); this.renderPanel(); },
       flip: () => { board.setFlipped(!board.flipped); this.refresh(); },
       new: () => { this.setup = true; this.renderPanel(); },
       analyse: () => { Analysis.loadRecord(this.lastRecord); switchTab('analysis'); },
