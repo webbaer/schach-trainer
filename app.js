@@ -628,6 +628,7 @@ const Play = {
       setStrip('top', { avatar: this.bot.emoji, name: this.bot.name, sub: `(${this.bot.elo})`, pos, color: me ^ 1, thinking: this.thinking });
       setStrip('bottom', { avatar: '🙂', name: 'Du', pos, color: me });
     }
+    renderBoardNav();
     EvalBar.show(this.showEval);
     if (this.showEval) {
       if (this.live.evals[ply] != null) EvalBar.set(this.live.evals[ply]);
@@ -783,12 +784,12 @@ const Play = {
     const cur = this.viewPly == null ? this.game.moves.length : this.viewPly;
     box.innerHTML = moveListHtml(this.game, cur, this.showLive ? this.live.cls : null);
     box.querySelectorAll('[data-ply]').forEach(e => e.onclick = () => this.view(+e.dataset.ply));
-    const c = box.querySelector('.cur');
-    if (c) c.scrollIntoView({ block: 'nearest' });
+    scrollListTo(box, box.querySelector('.cur'));
   },
 
   renderPanel() {
     const p = $('panel-play');
+    if (mode === 'play') renderBoardNav();
     if (!this.game || this.setup) {
       const beaten = beatenBots();
       p.innerHTML = `<div class="panel-head"><div class="big-ic">${this.bot.emoji}</div><div><h2>Neue Partie</h2><div class="muted">Wähle deinen Gegner</div></div></div>
@@ -816,12 +817,6 @@ const Play = {
       <div class="status-box" id="playStatus">${status}</div>
       <div class="live-box" id="liveBox"></div>
       <div class="movelist" id="playMoves"></div>
-      <div class="btn-row">
-        <button class="btn small" data-act="first" title="Anfang">⏮</button>
-        <button class="btn small" data-act="prev" title="Zurück (←)">◀</button>
-        <button class="btn small" data-act="next" title="Vor (→)">▶</button>
-        <button class="btn small" data-act="last" title="Aktuell">⏭</button>
-      </div>
       <div class="btn-row">
         <button class="btn" data-act="hint" ${this.over ? 'disabled' : ''}>💡 Tipp</button>
         <button class="btn" data-act="undo">↶ Zurück</button>
@@ -867,6 +862,14 @@ function beatenBots() {
     if (idx >= 0) set.add(idx);
   }
   return set;
+}
+
+// Nur die Zugliste scrollen, nicht die ganze Seite
+function scrollListTo(box, el) {
+  if (!el) return;
+  const top = el.offsetTop - box.offsetTop;
+  if (top < box.scrollTop) box.scrollTop = top;
+  else if (top + el.offsetHeight > box.scrollTop + box.clientHeight) box.scrollTop = top + el.offsetHeight - box.clientHeight;
 }
 
 function moveListHtml(game, curPly, classes) {
@@ -1259,6 +1262,7 @@ const Analysis = {
     }
     board.movable = -1;
     board.set(pos, opts);
+    renderBoardNav();
     EvalBar.show(true);
     EvalBar.set(this.evals[this.ply] != null ? this.evals[this.ply] : null);
     const r = this.record;
@@ -1313,8 +1317,7 @@ const Analysis = {
     if (!box) return;
     box.innerHTML = moveListHtml(this.game, this.ply, this.cls);
     box.querySelectorAll('[data-ply]').forEach(e => e.onclick = () => this.go(+e.dataset.ply));
-    const c = box.querySelector('.cur');
-    if (c) c.scrollIntoView({ block: 'nearest' });
+    scrollListTo(box, box.querySelector('.cur'));
   },
 
   renderGraph() {
@@ -1375,10 +1378,6 @@ const Analysis = {
         <div style="height:8px"></div>
         <svg class="graph" id="anaGraph" viewBox="0 0 400 90" preserveAspectRatio="none"></svg>
         <div class="explain" id="anaExplain"></div>
-        <div class="btn-row">
-          <button class="btn small" data-act="first">⏮</button><button class="btn small" data-act="prev">◀</button>
-          <button class="btn small" data-act="next">▶</button><button class="btn small" data-act="last">⏭</button>
-        </div>
         <div class="btn-row">
           <button class="btn small" data-act="nextErr">⚠ Nächster Fehler</button>
           <button class="btn small" data-act="best">${this.showBest ? '🔵 Pfeil aus' : '🔵 Bester Zug'}</button>
@@ -1447,6 +1446,33 @@ function copyText(t) {
   };
   if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(t).then(done, fallback);
   else fallback();
+}
+
+// ---------- Steuerleiste unter dem Brett ----------
+function renderBoardNav() {
+  const nav = $('boardNav');
+  const ana = mode === 'analysis' && Analysis.game, play = mode === 'play' && Play.game && !Play.setup;
+  if (!ana && !play) { nav.classList.add('hidden'); return; }
+  nav.classList.remove('hidden');
+  const g = ana ? Analysis.game : Play.game;
+  const ply = ana ? Analysis.ply : (Play.viewPly == null ? g.moves.length : Play.viewPly);
+  const n = g.moves.length;
+  let info = '<span class="muted">Startstellung</span>';
+  if (ply > 0) {
+    const m = g.moves[ply - 1];
+    const num = new C.Position(g.startFen).full + Math.floor((ply - 1 + g.moves[0].side) / 2);
+    const c = ana ? Analysis.cls[ply - 1] : (Play.showLive && Play.live.cls[ply - 1]);
+    const dot = c ? `<span class="cls-dot" style="background:${CLS[c].color}">${CLS[c].sym}</span>` : '';
+    info = `${dot}<b>${num}${m.side === 0 ? '.' : '…'} ${de(m.san)}</b>${c ? `<span class="muted nav-cls">${CLS[c].name}</span>` : ''}`;
+  }
+  if (play && Play.viewPly != null) info += ' <span class="pill">Rückblick</span>';
+  nav.innerHTML = `<button class="btn" data-act="first" ${ply === 0 ? 'disabled' : ''} title="Anfang">⏮</button>
+    <button class="btn" data-act="prev" ${ply === 0 ? 'disabled' : ''} title="Zurück (←)">◀</button>
+    <div class="nav-info">${info}<span class="muted small">${ply}/${n}</span></div>
+    <button class="btn" data-act="next" ${ply >= n ? 'disabled' : ''} title="Vor (→)">▶</button>
+    <button class="btn" data-act="last" ${ply >= n ? 'disabled' : ''} title="Ende">⏭</button>`;
+  const go = ana ? p => Analysis.go(p) : p => Play.view(p);
+  bind(nav, { first: () => go(0), prev: () => go(ply - 1), next: () => go(ply + 1), last: () => go(1e9) });
 }
 
 // ---------- Übersicht ----------
@@ -1538,6 +1564,7 @@ function switchTab(name) {
   for (const k of ['play', 'puzzle', 'analysis']) $('panel-' + k).classList.toggle('hidden', k !== name);
   board.sel = -1;
   modes[name].activate();
+  renderBoardNav();
   store.set('tab', name);
   window.scrollTo(0, 0);
 }
