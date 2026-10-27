@@ -284,6 +284,28 @@ const pieceHtml = p => pieceSet === 'unicode'
   ? `<span class="piece ${p >> 3 ? 'b' : 'w'}">${GLYPH[p & 7]}︎</span>`
   : `<img class="piece piece-img" src="${pieceSrc(pieceSet, p)}" alt="" draggable="false">`;
 
+// Icons (Lucide, als CSS-Maske – siehe icons.css) und kleine Figurenbilder statt Emojis
+const ico = (name, cls) => `<i class="ic i-${name}${cls ? ' ' + cls : ''}"></i>`;
+function renderIcon(spec) {
+  if (!spec) return '';
+  if (spec.startsWith('piece:')) {
+    const c = spec[6], code = ' PNBRQK'.indexOf(c.toUpperCase()) | (c === c.toLowerCase() ? 8 : 0);
+    return `<img class="pc-ico" src="${pieceSrc(pieceSet === 'unicode' ? 'cburnett' : pieceSet, code)}" alt="">`;
+  }
+  return ico(spec);
+}
+// Bot-Avatar: Monogramm im farbigen Kreis (Farbe nach Spielstärke)
+function botAvatar(b) {
+  if (!b) return '';
+  if (b.human) return `<span class="mono" style="--h:220">${ico('users')}</span>`;
+  if (b.adaptive) return `<span class="mono" style="--h:340">${ico('target')}</span>`;
+  const li = LADDER.indexOf(BOTS.indexOf(b));
+  const hue = b.hue != null ? b.hue : li >= 0 ? 140 - li * 15 : 220;
+  return `<span class="mono" style="--h:${hue}">${b.name[0]}</span>`;
+}
+const youAvatar = () => `<span class="mono you">${ico('user')}</span>`;
+const sideAvatar = c => `<span class="mono side${c ? ' b' : ''}">${ico(c ? 'chess-king-f' : 'chess-king')}</span>`;
+
 const preloaded = [];
 function preloadPieces(set) {
   if (set === 'unicode') return;
@@ -295,7 +317,7 @@ function openPieceChooser() {
   const prev = s => s.id === 'unicode'
     ? `<span class="pc-uni">${GLYPH[2]}︎</span><span class="pc-uni b">${GLYPH[5]}︎</span>`
     : `<img src="${pieceSrc(s.id, 2)}" alt=""><img src="${pieceSrc(s.id, 13)}" alt="">`;
-  showModal(`<h2>🎨 Figuren</h2><div class="pc-grid">${PIECE_SETS.map(s => `<button class="pc ${s.id === pieceSet ? 'active' : ''}" data-act="pick" data-arg="${s.id}"><div class="pc-prev">${prev(s)}</div>${s.name}</button>`).join('')}</div>
+  showModal(`<h2><i class="ic i-palette"></i> Figuren</h2><div class="pc-grid">${PIECE_SETS.map(s => `<button class="pc ${s.id === pieceSet ? 'active' : ''}" data-act="pick" data-arg="${s.id}"><div class="pc-prev">${prev(s)}</div>${s.name}</button>`).join('')}</div>
     <button class="btn primary full" data-act="close">Fertig</button>
     <p class="muted small" style="margin-bottom:0">Figuren von lichess.org-Künstlern unter freien Lizenzen (GPL, MIT, Apache, CC) – Details in pieces/LIZENZEN.md.</p>`, {
     pick: id => { pieceSet = id; store.set('pieceSet', id); preloadPieces(id); board.render(); openPieceChooser(); },
@@ -366,7 +388,7 @@ class Board {
       const [row, col] = this.rowCol(sq);
       if (col === 0) html += `<span class="coord rank">${(sq >> 4) + 1}</span>`;
       if (row === 7) html += `<span class="coord file">${'abcdefgh'[sq & 7]}</span>`;
-      if (o.stars && o.stars.includes(sq)) html += '<span class="star">⭐</span>';
+      if (o.stars && o.stars.includes(sq)) html += '<span class="star"><i class="ic i-star-f"></i></span>';
       if (o.badge && o.badge.sq === sq) html += `<span class="badge" style="background:${o.badge.color}">${o.badge.sym}</span>`;
       // nur ändern, wenn sich der Inhalt wirklich geändert hat – so bleiben die Figurenbilder stehen
       if (d._html !== html) { d.innerHTML = html; d._html = html; }
@@ -537,14 +559,14 @@ function capturedInfo(pos, color) {
   }
   const opp = color ^ 1;
   let s = '';
-  for (const t of [5, 4, 3, 2, 1]) for (let i = cnt[opp][t]; i < start[t]; i++) s += GLYPH[t] + '︎';
+  for (const t of [5, 4, 3, 2, 1]) for (let i = cnt[opp][t]; i < start[t]; i++) s += renderIcon('piece:' + (opp ? 'pnbrq' : 'PNBRQ')[t - 1]);
   const diff = mat[color] - mat[opp];
   return s + (diff > 0 ? ` <span class="sub">+${diff}</span>` : '');
 }
 function setStrip(where, info) {
   const el = $(where === 'top' ? 'stripTop' : 'stripBottom');
   if (!info) { el.innerHTML = ''; return; }
-  el.innerHTML = `<div class="avatar">${info.avatar || '🙂'}</div><div>${esc(info.name)} ${info.sub ? `<span class="sub">${esc(info.sub)}</span>` : ''}</div>` +
+  el.innerHTML = `<div class="avatar">${info.avatar || youAvatar()}</div><div>${esc(info.name)} ${info.sub ? `<span class="sub">${esc(info.sub)}</span>` : ''}</div>` +
     (info.pos ? `<div class="captured">${capturedInfo(info.pos, info.color)}</div>` : '') +
     (info.thinking ? '<div class="thinking">denkt nach …</div>' : '') +
     (info.clock ? `<div class="clock" data-color="${info.color}"></div>` : '');
@@ -572,23 +594,23 @@ const accFromLoss = loss => Math.max(0, Math.min(100, 103.1668 * Math.exp(-0.043
 
 // ---------- Bots ----------
 const BOTS = [
-  { name: 'Bruno', ladder: true, emoji: '🐣', elo: 400, depth: 1, noise: 400, blunder: 0.3, desc: 'Lernt gerade die Regeln' },
-  { name: 'Lina', ladder: true, emoji: '🐢', elo: 600, depth: 1, noise: 250, blunder: 0.15, desc: 'Übersieht oft Figuren' },
-  { name: 'Max', ladder: true, emoji: '🦊', elo: 800, depth: 2, noise: 160, blunder: 0.08, desc: 'Gelegenheitsspieler' },
-  { name: 'Emma', ladder: true, emoji: '🐼', elo: 1000, depth: 2, noise: 90, blunder: 0.04, desc: 'Vereinsanfängerin' },
-  { name: 'Paul', ladder: true, emoji: '🦉', elo: 1200, depth: 3, noise: 55, blunder: 0.02, desc: 'Solider Hobbyspieler' },
-  { name: 'Sofia', ladder: true, emoji: '🐺', elo: 1400, depth: 3, noise: 25, blunder: 0, desc: 'Kennt die Taktiken' },
-  { name: 'Viktor', ladder: true, emoji: '🦁', elo: 1600, depth: 4, noise: 12, blunder: 0, desc: 'Starker Vereinsspieler' },
-  { name: 'Greta', ladder: true, emoji: '🐉', elo: 1800, time: 400, desc: 'Experte' },
-  { name: 'Kaspar', ladder: true, emoji: '🤖', elo: 2000, time: 1200, desc: 'Meisteranwärter' },
-  { name: 'Titan', ladder: true, emoji: '👑', elo: 2300, time: 3000, desc: 'Volle Engine-Stärke' },
-  { name: 'Freund', emoji: '👥', elo: 0, human: true, desc: 'Zwei Spieler an einem Gerät' },
+  { name: 'Bruno', ladder: true, elo: 400, depth: 1, noise: 400, blunder: 0.3, desc: 'Lernt gerade die Regeln' },
+  { name: 'Lina', ladder: true, elo: 600, depth: 1, noise: 250, blunder: 0.15, desc: 'Übersieht oft Figuren' },
+  { name: 'Max', ladder: true, elo: 800, depth: 2, noise: 160, blunder: 0.08, desc: 'Gelegenheitsspieler' },
+  { name: 'Emma', ladder: true, elo: 1000, depth: 2, noise: 90, blunder: 0.04, desc: 'Vereinsanfängerin' },
+  { name: 'Paul', ladder: true, elo: 1200, depth: 3, noise: 55, blunder: 0.02, desc: 'Solider Hobbyspieler' },
+  { name: 'Sofia', ladder: true, elo: 1400, depth: 3, noise: 25, blunder: 0, desc: 'Kennt die Taktiken' },
+  { name: 'Viktor', ladder: true, elo: 1600, depth: 4, noise: 12, blunder: 0, desc: 'Starker Vereinsspieler' },
+  { name: 'Greta', ladder: true, elo: 1800, time: 400, desc: 'Experte' },
+  { name: 'Kaspar', ladder: true, elo: 2000, time: 1200, desc: 'Meisteranwärter' },
+  { name: 'Titan', ladder: true, elo: 2300, time: 3000, desc: 'Volle Engine-Stärke' },
+  { name: 'Freund', elo: 0, human: true, desc: 'Zwei Spieler an einem Gerät' },
   // Persönlichkeiten: eigener Spielstil + Lieblingseröffnungen
-  { name: 'Attila', emoji: '🗡️', elo: 1300, depth: 3, noise: 25, blunder: 0.01, persona: true, style: 'attack', book: { w: ['italienisch'], b: ['sizilianisch'] }, desc: 'Greift immer an: Schach, Opfer, Königsangriff. Spielt Italienisch und Sizilianisch.' },
-  { name: 'Dagmar', emoji: '♛', elo: 1400, depth: 3, noise: 20, persona: true, style: 'solid', book: { w: ['damengambit'], b: ['slawisch', 'carokann'] }, desc: 'Spielt immer Damengambit – als Schwarz Slawisch oder Caro-Kann. Solide und positionell.' },
-  { name: 'Erik', emoji: '🧮', elo: 1500, depth: 3, noise: 15, persona: true, style: 'trade', book: { w: ['spanisch'], b: ['e5schwarz', 'franzoesisch'] }, desc: 'Tauscht so oft wie möglich ab und will ins Endspiel.' },
-  { name: 'Fritz', emoji: '🛡️', elo: 1150, depth: 3, noise: 30, blunder: 0.02, persona: true, style: 'defend', book: { w: ['london'], b: ['carokann', 'franzoesisch'] }, desc: 'Mauert, rochiert früh und wartet auf deine Fehler. Spielt das London-System.' },
-  { name: 'Gina', emoji: '🎲', elo: 900, depth: 2, noise: 60, blunder: 0.05, persona: true, style: 'attack', book: { w: ['italienisch', 'e5schwarz'], b: ['skandinavisch'] }, desc: 'Wild und riskant – liebt Fallen und schnelle Angriffe.' }
+  { name: 'Attila', hue: 0, elo: 1300, depth: 3, noise: 25, blunder: 0.01, persona: true, style: 'attack', book: { w: ['italienisch'], b: ['sizilianisch'] }, desc: 'Greift immer an: Schach, Opfer, Königsangriff. Spielt Italienisch und Sizilianisch.' },
+  { name: 'Dagmar', hue: 285, elo: 1400, depth: 3, noise: 20, persona: true, style: 'solid', book: { w: ['damengambit'], b: ['slawisch', 'carokann'] }, desc: 'Spielt immer Damengambit – als Schwarz Slawisch oder Caro-Kann. Solide und positionell.' },
+  { name: 'Erik', hue: 195, elo: 1500, depth: 3, noise: 15, persona: true, style: 'trade', book: { w: ['spanisch'], b: ['e5schwarz', 'franzoesisch'] }, desc: 'Tauscht so oft wie möglich ab und will ins Endspiel.' },
+  { name: 'Fritz', hue: 35, elo: 1150, depth: 3, noise: 30, blunder: 0.02, persona: true, style: 'defend', book: { w: ['london'], b: ['carokann', 'franzoesisch'] }, desc: 'Mauert, rochiert früh und wartet auf deine Fehler. Spielt das London-System.' },
+  { name: 'Gina', hue: 320, elo: 900, depth: 2, noise: 60, blunder: 0.05, persona: true, style: 'attack', book: { w: ['italienisch', 'e5schwarz'], b: ['skandinavisch'] }, desc: 'Wild und riskant – liebt Fallen und schnelle Angriffe.' }
 ];
 const LADDER = BOTS.map((b, i) => b.ladder ? i : -1).filter(i => i >= 0);
 
@@ -641,7 +663,7 @@ const Play = {
     const elo = this.placement.est;
     let near = BOTS[0];
     for (const b of BOTS) if (b.ladder && Math.abs(b.elo - elo) < Math.abs(near.elo - elo)) near = b;
-    return Object.assign({}, near, { name: 'Adaptiver Bot', emoji: '🎯', elo: Math.round(elo / 10) * 10, desc: 'Passt sich deiner Stärke an' });
+    return Object.assign({}, near, { name: 'Adaptiver Bot', adaptive: true, elo: Math.round(elo / 10) * 10, desc: 'Passt sich deiner Stärke an' });
   },
 
   // ----- Einstufungspartie -----
@@ -708,7 +730,7 @@ const Play = {
     let pieces = 0;
     for (let sq = 0; sq < 128; sq++) { if (sq & 0x88) { sq += 7; continue; } const t = this.game.pos.board[sq] & 7; if (t > 1 && t < 6) pieces++; }
     const phase = this.game.moves.length < 20 ? 'Eröffnung' : pieces <= 6 ? 'Endspiel' : 'Mittelspiel';
-    box.innerHTML = `<div class="row"><b>🎯 Einstufungspartie</b><span class="muted small">${n} ${n === 1 ? 'Zug' : 'Züge'} bewertet · ${phase}</span></div>
+    box.innerHTML = `<div class="row"><b><i class="ic i-target"></i> Einstufungspartie</b><span class="muted small">${n} ${n === 1 ? 'Zug' : 'Züge'} bewertet · ${phase}</span></div>
       <div class="place-est"><div><span class="muted small">Deine Stärke (Schätzung)</span><b>~${Math.round(P.est / 10) * 10}</b></div>
       <div><span class="muted small">Bot spielt auf</span><b>~${this.bot.elo}</b></div></div>
       <div class="muted small">Spiel die Partie bis zum Ende – jeder Zug zählt, auch im Endspiel. Der Bot passt sich nach jedem Zug an. Tipps und Zurücknehmen sind während der Einstufung aus.</div>`;
@@ -774,21 +796,21 @@ const Play = {
     const g = OPENING_GROUPS.find(x => elo >= x.min && elo < x.max) || OPENING_GROUPS[0];
     const nextU = LESSONS[Math.min(units, LESSONS.length - 1)];
     Sound.play('end');
-    showModal(`<div style="font-size:54px">🎯</div><h2>Deine Einstufung</h2>
+    showModal(`<div class="modal-ic"><i class="ic i-target"></i></div><h2>Deine Einstufung</h2>
       <div class="xp-gain" style="font-size:40px">~${elo} Elo</div>
       <div class="place-list">
-        <div>🎓 <b>Lernpfad:</b> ${units === 0 ? 'Start ganz am Anfang' : units >= LESSONS.length ? 'alle Kapitel freigeschaltet' : `Einstieg bei Kapitel ${units + 1} „${nextU.title}“`}</div>
-        <div>♟ <b>Passender Gegner:</b> ${BOTS[bi].emoji} ${BOTS[bi].name} (ca. ${BOTS[bi].elo})</div>
-        <div>📖 <b>Eröffnungen:</b> ${g.icon} ${g.name} (${g.range})</div>
-        ${Puzzles.st.tries ? '' : `<div>🧩 <b>Rätsel-Wertung:</b> startet bei ${elo}</div>`}
+        <div><i class="ic i-graduation-cap"></i> <b>Lernpfad:</b> ${units === 0 ? 'Start ganz am Anfang' : units >= LESSONS.length ? 'alle Kapitel freigeschaltet' : `Einstieg bei Kapitel ${units + 1} „${nextU.title}“`}</div>
+        <div><i class="ic i-swords"></i> <b>Passender Gegner:</b> ${botAvatar(BOTS[bi])} ${BOTS[bi].name} (ca. ${BOTS[bi].elo})</div>
+        <div><i class="ic i-book-open"></i> <b>Eröffnungen:</b> ${renderIcon(g.icon)} ${g.name} (${g.range})</div>
+        ${Puzzles.st.tries ? '' : `<div><i class="ic i-puzzle"></i> <b>Rätsel-Wertung:</b> startet bei ${elo}</div>`}
       </div>
       <p class="muted small">Die Schätzung beruht auf der Qualität deiner Züge (von der Engine bewertet) und dem Ergebnis. Mit jeder weiteren Partie wird dein Bild genauer.</p>
-      ${midgame ? `<p class="small">Die Partie ist noch nicht vorbei – du spielst sie jetzt gegen ${BOTS[bi].emoji} <b>${BOTS[bi].name}</b> zu Ende.</p>
-      <button class="btn primary full" data-act="cont">♟ Partie zu Ende spielen</button>
-      <button class="btn full" data-act="learn">🎓 Zum Lernpfad (Partie bleibt gespeichert)</button>`
-      : `<button class="btn primary full" data-act="learn">🎓 Zum Lernpfad</button>
-      <button class="btn full" data-act="analyse">📈 Partie analysieren</button>
-      <button class="btn full" data-act="play">♟ Gegen ${BOTS[bi].name} spielen</button>`}`, {
+      ${midgame ? `<p class="small">Die Partie ist noch nicht vorbei – du spielst sie jetzt gegen ${botAvatar(BOTS[bi])} <b>${BOTS[bi].name}</b> zu Ende.</p>
+      <button class="btn primary full" data-act="cont"><i class="ic i-swords"></i> Partie zu Ende spielen</button>
+      <button class="btn full" data-act="learn"><i class="ic i-graduation-cap"></i> Zum Lernpfad (Partie bleibt gespeichert)</button>`
+      : `<button class="btn primary full" data-act="learn"><i class="ic i-graduation-cap"></i> Zum Lernpfad</button>
+      <button class="btn full" data-act="analyse"><i class="ic i-chart-line"></i> Partie analysieren</button>
+      <button class="btn full" data-act="play"><i class="ic i-swords"></i> Gegen ${BOTS[bi].name} spielen</button>`}`, {
       cont: () => { hideModal(); this.refresh(); this.renderPanel(); this.maybeBot(); },
       learn: () => { hideModal(); switchTab('learn'); },
       analyse: () => { hideModal(); Analysis.loadRecord(this.lastRecord); switchTab('analysis'); },
@@ -893,8 +915,8 @@ const Play = {
       board.movable = -1;
       board.set(new C.Position(), {});
       EvalBar.show(false);
-      setStrip('top', { avatar: this.bot.emoji, name: this.bot.name, sub: this.bot.human ? '' : `(${this.bot.elo})` });
-      setStrip('bottom', { avatar: '🙂', name: 'Du' });
+      setStrip('top', { avatar: botAvatar(this.bot), name: this.bot.name, sub: this.bot.human ? '' : `(${this.bot.elo})` });
+      setStrip('bottom', { avatar: youAvatar(), name: 'Du' });
       return;
     }
     const ply = this.viewPly == null ? this.game.moves.length : this.viewPly;
@@ -909,11 +931,11 @@ const Play = {
     });
     const me = this.bot.human ? 0 : this.userColor;
     if (this.bot.human) {
-      setStrip(board.flipped ? 'bottom' : 'top', { avatar: '♚', name: 'Schwarz', pos, color: 1, clock: !!this.clock });
-      setStrip(board.flipped ? 'top' : 'bottom', { avatar: '♔', name: 'Weiß', pos, color: 0, clock: !!this.clock });
+      setStrip(board.flipped ? 'bottom' : 'top', { avatar: sideAvatar(1), name: 'Schwarz', pos, color: 1, clock: !!this.clock });
+      setStrip(board.flipped ? 'top' : 'bottom', { avatar: sideAvatar(0), name: 'Weiß', pos, color: 0, clock: !!this.clock });
     } else {
-      setStrip('top', { avatar: this.bot.emoji, name: this.bot.name, sub: `(${this.bot.elo})`, pos, color: me ^ 1, thinking: this.thinking, clock: !!this.clock });
-      setStrip('bottom', { avatar: '🙂', name: 'Du', pos, color: me, clock: !!this.clock });
+      setStrip('top', { avatar: botAvatar(this.bot), name: this.bot.name, sub: `(${this.bot.elo})`, pos, color: me ^ 1, thinking: this.thinking, clock: !!this.clock });
+      setStrip('bottom', { avatar: youAvatar(), name: 'Du', pos, color: me, clock: !!this.clock });
     }
     this.renderClocks();
     renderBoardNav();
@@ -998,12 +1020,12 @@ const Play = {
     const userWon = !this.bot.human && ((result === '1-0' && this.userColor === 0) || (result === '0-1' && this.userColor === 1));
     const userLost = !this.bot.human && result !== '1/2-1/2' && !userWon;
     const title = this.bot.human ? (result === '1-0' ? 'Weiß gewinnt' : result === '0-1' ? 'Schwarz gewinnt' : 'Remis') :
-      userWon ? '🏆 Gewonnen!' : userLost ? 'Verloren' : '🤝 Remis';
-    const sub = userWon ? `Du hast ${this.bot.name} besiegt! ${this.bot.ladder && this.botIdx < 9 ? `Als Nächstes: ${BOTS[this.botIdx + 1].name} ${BOTS[this.botIdx + 1].emoji}` : ''}` : '';
-    showModal(`<div style="font-size:54px">${this.bot.emoji}</div><h2>${title}</h2><p class="muted">${STATUS_TEXT[reason]} · ${result}</p>
+      userWon ? '<i class="ic i-trophy"></i> Gewonnen!' : userLost ? 'Verloren' : '<i class="ic i-handshake"></i> Remis';
+    const sub = userWon ? `Du hast ${this.bot.name} besiegt! ${this.bot.ladder && this.botIdx < 9 ? `Als Nächstes: ${BOTS[this.botIdx + 1].name} ${botAvatar(BOTS[this.botIdx + 1])}` : ''}` : '';
+    showModal(`<div class="modal-ic">${botAvatar(this.bot)}</div><h2>${title}</h2><p class="muted">${STATUS_TEXT[reason]} · ${result}</p>
       ${sub ? `<p>${sub}</p>` : ''}
-      ${added ? `<p class="small">⭐ ${added} ${added === 1 ? 'Fehler wurde' : 'Fehler wurden'} ins Fehler-Training übernommen.</p>` : ''}
-      <button class="btn primary full" data-act="analyse">📈 Partie analysieren</button>
+      ${added ? `<p class="small"><i class="ic i-star"></i> ${added} ${added === 1 ? 'Fehler wurde' : 'Fehler wurden'} ins Fehler-Training übernommen.</p>` : ''}
+      <button class="btn primary full" data-act="analyse"><i class="ic i-chart-line"></i> Partie analysieren</button>
       ${userWon && this.bot.ladder && this.botIdx < 9 ? '<button class="btn full" data-act="nextBot">Nächsten Bot herausfordern</button>' : ''}
       <button class="btn full" data-act="again">Revanche</button>
       <button class="btn full" data-act="close">Schließen</button>`, {
@@ -1039,7 +1061,7 @@ const Play = {
     if (!r || tok !== this.token || !r.move) return;
     this.hint = r.move;
     const san = de(this.game.pos.toSan(this.game.pos.fromUci(r.move)));
-    $('playStatus').innerHTML = `💡 Tipp: <b>${san}</b> <span class="muted">(${fmtEval(this.game.pos.side === 0 ? r.score : -r.score)})</span>`;
+    $('playStatus').innerHTML = `<i class="ic i-lightbulb"></i> Tipp: <b>${san}</b> <span class="muted">(${fmtEval(this.game.pos.side === 0 ? r.score : -r.score)})</span>`;
     this.refresh();
   },
 
@@ -1087,21 +1109,22 @@ const Play = {
   renderPanel() {
     const p = $('panel-play');
     if (mode === 'play') renderBoardNav();
+    document.body.classList.toggle('play-setup', mode === 'play' && (!this.game || !!this.setup));
     if (!this.game || this.setup) {
       const beaten = beatenBots();
-      p.innerHTML = `<div class="panel-head"><div class="big-ic">${this.bot.emoji}</div><div><h2>Neue Partie</h2><div class="muted">Wähle deinen Gegner</div></div></div>
+      p.innerHTML = `<div class="panel-head"><div class="big-ic">${botAvatar(this.bot)}</div><div><h2>Neue Partie</h2><div class="muted">Wähle deinen Gegner</div></div></div>
         ${(() => { const card = (b, i) => `<button class="bot-card ${i === this.botIdx ? 'active' : ''} ${beaten.has(i) ? 'has-beaten' : ''}" data-act="bot" data-arg="${i}">
-          <span class="em">${b.emoji}</span><span class="nm">${b.name}</span><span class="el">${b.human ? '2 Spieler' : 'ca. ' + b.elo}</span>${beaten.has(i) ? '<span class="beaten">✔</span>' : ''}</button>`;
+          <span class="em">${botAvatar(b)}</span><span class="nm">${b.name}</span><span class="el">${b.human ? '2 Spieler' : 'ca. ' + b.elo}</span>${beaten.has(i) ? '<span class="beaten"><i class="ic i-check"></i></span>' : ''}</button>`;
           return `<div class="bot-grid">${BOTS.map((b, i) => !b.persona ? card(b, i) : '').join('')}</div>
-            <h3>🎭 Persönlichkeiten</h3><div class="bot-grid">${BOTS.map((b, i) => b.persona ? card(b, i) : '').join('')}</div>`; })()}
+            <h3><i class="ic i-venetian-mask"></i> Persönlichkeiten</h3><div class="bot-grid">${BOTS.map((b, i) => b.persona ? card(b, i) : '').join('')}</div>`; })()}
         <p class="muted small">${esc(this.bot.desc)}</p>
         <h3>Deine Farbe</h3>
-        <div class="seg">${[['w', '♔ Weiß'], ['r', '🎲 Zufall'], ['b', '♚ Schwarz']].map(([k, l]) => `<button class="${this.colorChoice === k ? 'active' : ''}" data-act="color" data-arg="${k}">${l}</button>`).join('')}</div>
-        <h3>⏱️ Bedenkzeit</h3>
+        <div class="seg">${[['w', '<i class="ic i-chess-king"></i> Weiß'], ['r', '<i class="ic i-dices"></i> Zufall'], ['b', '<i class="ic i-chess-king-f"></i> Schwarz']].map(([k, l]) => `<button class="${this.colorChoice === k ? 'active' : ''}" data-act="color" data-arg="${k}">${l}</button>`).join('')}</div>
+        <h3><i class="ic i-timer"></i> Bedenkzeit</h3>
         <div class="seg tc-seg">${TIME_CONTROLS.map(t => `<button class="${this.tc === t.id ? 'active' : ''}" data-act="tc" data-arg="${t.id}">${t.name}</button>`).join('')}</div>
         <div style="height:16px"></div>
-        <button class="btn primary full" data-act="start">▶ Spielen gegen ${this.bot.name}</button>
-        <div class="btn-row"><button class="btn small" data-act="place">🎯 Einstufungspartie</button><button class="btn small" data-act="pieces">🎨 Figuren ändern</button></div>
+        <button class="btn primary full" data-act="start"><i class="ic i-play"></i> Spielen gegen ${this.bot.name}</button>
+        <div class="btn-row"><button class="btn small" data-act="place"><i class="ic i-target"></i> Einstufungspartie</button><button class="btn small" data-act="pieces"><i class="ic i-palette"></i> Figuren ändern</button></div>
         ${this.game && this.setup ? '<button class="btn full" style="margin-top:8px" data-act="back">Zurück zur laufenden Partie</button>' : ''}`;
       bind(p, {
         bot: i => { this.botIdx = +i; store.set('botIdx', this.botIdx); this.renderPanel(); if (!this.game) this.refresh(); },
@@ -1117,25 +1140,25 @@ const Play = {
     const b = this.bot;
     const turn = this.game.pos.side === 0 ? 'Weiß' : 'Schwarz';
     const status = this.over ? `<b>${STATUS_TEXT[this.over.reason]}</b> · ${this.over.result}` :
-      this.thinking ? `${b.emoji} ${b.name} denkt nach …` : this.isUserTurn() ? `<b>${turn}</b> ist am Zug${this.game.pos.inCheck() ? ' – <b style="color:var(--accent2)">Schach!</b>' : ''}` : '';
-    p.innerHTML = `<div class="panel-head"><div class="big-ic">${b.emoji}</div><div><h2>${b.human ? 'Partie zu zweit' : 'gegen ' + b.name}</h2><div class="muted">${b.human ? 'Ein Gerät, zwei Spieler' : 'ca. ' + b.elo + ' Elo · ' + esc(b.desc)}</div></div></div>
+      this.thinking ? `${botAvatar(b)} ${b.name} denkt nach …` : this.isUserTurn() ? `<b>${turn}</b> ist am Zug${this.game.pos.inCheck() ? ' – <b style="color:var(--accent2)">Schach!</b>' : ''}` : '';
+    p.innerHTML = `<div class="panel-head"><div class="big-ic">${botAvatar(b)}</div><div><h2>${b.human ? 'Partie zu zweit' : 'gegen ' + b.name}</h2><div class="muted">${b.human ? 'Ein Gerät, zwei Spieler' : 'ca. ' + b.elo + ' Elo · ' + esc(b.desc)}</div></div></div>
       ${this.placement ? '<div class="place-box" id="placeBox"></div>' : ''}
       <div class="status-box" id="playStatus">${status}</div>
       <div class="live-box" id="liveBox"></div>
       <div class="movelist" id="playMoves"></div>
       <div class="btn-row">
-        <button class="btn" data-act="hint" ${this.over || this.placement ? 'disabled' : ''}>💡 Tipp</button>
-        <button class="btn" data-act="undo" ${this.placement ? 'disabled' : ''}>↶ Zurück</button>
-        <button class="btn" data-act="flip">⇅ Drehen</button>
-        <button class="btn danger" data-act="resign" ${this.over ? 'disabled' : ''}>🏳 Aufgeben</button>
+        <button class="btn" data-act="hint" ${this.over || this.placement ? 'disabled' : ''}><i class="ic i-lightbulb"></i> Tipp</button>
+        <button class="btn" data-act="undo" ${this.placement ? 'disabled' : ''}><i class="ic i-undo-2"></i> Zurück</button>
+        <button class="btn" data-act="flip"><i class="ic i-arrow-up-down"></i> Drehen</button>
+        <button class="btn danger" data-act="resign" ${this.over ? 'disabled' : ''}><i class="ic i-flag"></i> Aufgeben</button>
       </div>
       <label class="chk"><input type="checkbox" id="liveChk" ${this.showLive ? 'checked' : ''}> Züge live bewerten (Brillant, Patzer …)</label>
       <label class="chk"><input type="checkbox" id="evalChk" ${this.showEval ? 'checked' : ''}> Bewertungsbalken anzeigen</label>
       ${b.human ? '' : `<div class="row" style="margin-top:6px"><span class="muted small">Bot-Tempo</span>
         <div class="seg" style="flex:0 0 230px">${[[400, 'Schnell'], [1300, 'Normal'], [2600, 'Langsam']].map(([v, l]) => `<button class="${this.botDelay === v ? 'active' : ''}" data-act="delay" data-arg="${v}">${l}</button>`).join('')}</div></div>`}
       <div style="height:10px"></div>
-      ${this.over ? '<button class="btn primary full" data-act="analyse">📈 Partie analysieren</button><div style="height:6px"></div>' : ''}
-      <div class="btn-row"><button class="btn" data-act="new">＋ Neues Spiel</button><button class="btn" data-act="pgn">📋 PGN</button></div>`;
+      ${this.over ? '<button class="btn primary full" data-act="analyse"><i class="ic i-chart-line"></i> Partie analysieren</button><div style="height:6px"></div>' : ''}
+      <div class="btn-row"><button class="btn" data-act="new"><i class="ic i-plus"></i> Neues Spiel</button><button class="btn" data-act="pgn"><i class="ic i-clipboard-copy"></i> PGN</button></div>`;
     bind(p, {
       first: () => this.view(0), prev: () => this.nav(-1), next: () => this.nav(1), last: () => this.view(1e9),
       hint: () => this.getHint(), undo: () => this.takeback(), resign: () => this.resign(),
@@ -1202,7 +1225,7 @@ function moveListHtml(game, curPly, classes) {
 // ---------- Modus: Rätsel ----------
 const PUZZLES = (window.PUZZLES || []).slice().sort((a, b) => a.rating - b.rating);
 const PUZZLE_THEMES = [
-  ['all', 'Alle', () => true], ['mine', '⭐ Meine Fehler', null],
+  ['all', 'Alle', () => true], ['mine', '<i class="ic i-star"></i> Meine Fehler', null],
   ['m1', 'Matt in 1', t => t.includes('Matt in 1')], ['m2', 'Matt in 2', t => t.includes('Matt in 2')],
   ['m3', 'Matt in 3+', t => t.some(x => /Matt in [3-9]/.test(x))], ['Gabel', 'Gabel', t => t.includes('Gabel')],
   ['Material gewinnen', 'Material gewinnen', t => t.includes('Material gewinnen')], ['Angriff', 'Angriff', t => t.includes('Angriff')],
@@ -1318,8 +1341,8 @@ const Puzzles = {
     const marks = Object.assign({}, this.marks || {});
     if (this.hintSq >= 0) marks[this.hintSq] = 'hint';
     board.set(this.game.pos, { last: lm ? [lm.from, lm.to] : null, marks, animate: animate && lm ? [lm.from, lm.to] : null });
-    setStrip('top', { avatar: this.cur.own ? '⭐' : '🧩', name: this.cur.own ? 'Dein Fehler' : 'Rätsel', sub: !this.cur.own && !this.rush && (this.solved || this.failed) ? `Wertung ${this.cur.rating}` : '', pos: this.game.pos, color: this.userColor ^ 1 });
-    setStrip('bottom', { avatar: '🙂', name: 'Du', sub: `(${Math.round(this.st.rating)})`, pos: this.game.pos, color: this.userColor });
+    setStrip('top', { avatar: `<span class="mono" style="--h:${this.cur.own ? 45 : 200}">${ico(this.cur.own ? 'star' : 'puzzle')}</span>`, name: this.cur.own ? 'Dein Fehler' : 'Rätsel', sub: !this.cur.own && !this.rush && (this.solved || this.failed) ? `Wertung ${this.cur.rating}` : '' });
+    setStrip('bottom', { avatar: youAvatar(), name: 'Du', sub: `(${Math.round(this.st.rating)})` });
   },
 
   rate(win) {
@@ -1406,7 +1429,7 @@ const Puzzles = {
     if (this.rush) { this.rushHit(); return; }
     if (!this.failed) this.rate(true);
     Sound.play('good');
-    this.msg = text || (this.failed ? '✓ Gelöst – aber nicht im ersten Versuch.' : '🎉 Perfekt gelöst!');
+    this.msg = text || (this.failed ? '✓ Gelöst – aber nicht im ersten Versuch.' : '<i class="ic i-party-popper"></i> Perfekt gelöst!');
     if (this.cur.own && !this.failed) this.msg += ' Dieser Fehler kommt in ein paar Tagen zur Wiederholung.';
     this.refresh(true); this.renderPanel();
   },
@@ -1460,8 +1483,8 @@ const Puzzles = {
     if (isRecord) { rec[R.mode] = R.score; store.set('rushRecords', rec); }
     markActivity();
     Sound.play('end');
-    showModal(`<div style="font-size:54px">⚡</div><h2>${R.name}: ${R.score} gelöst</h2>
-      ${isRecord ? '<div class="xp-gain">🏆 Neuer Rekord!</div>' : `<p class="muted">Rekord: ${rec[R.mode] || 0}</p>`}
+    showModal(`<div class="modal-ic"><i class="ic i-zap"></i></div><h2>${R.name}: ${R.score} gelöst</h2>
+      ${isRecord ? '<div class="xp-gain"><i class="ic i-trophy"></i> Neuer Rekord!</div>' : `<p class="muted">Rekord: ${rec[R.mode] || 0}</p>`}
       <div class="rush-log">${R.log.map(x => `<span class="${x.ok ? 'ok' : 'bad'}">${Math.round(x.r)}</span>`).join('')}</div>
       <button class="btn primary full" data-act="again">Nochmal</button><button class="btn full" data-act="close">Zurück zu den Rätseln</button>`, {
       again: () => { hideModal(); this.startRush(R.mode); },
@@ -1471,14 +1494,14 @@ const Puzzles = {
   renderEmpty() {
     const p = $('panel-puzzle');
     p.innerHTML = this.tabsHtml() + (this.theme === 'mine'
-      ? `<div class="status-box"><b>⭐ Keine Fehler fällig</b><div class="small" style="margin-top:4px">Hier landen automatisch deine Fehler und Patzer aus Partien gegen die Bots (mit Live-Bewertung) und aus der Partieanalyse. Spiel eine Partie oder analysiere eine – dann übst du genau deine eigenen Schwachstellen.</div>
+      ? `<div class="status-box"><b><i class="ic i-star"></i> Keine Fehler fällig</b><div class="small" style="margin-top:4px">Hier landen automatisch deine Fehler und Patzer aus Partien gegen die Bots (mit Live-Bewertung) und aus der Partieanalyse. Spiel eine Partie oder analysiere eine – dann übst du genau deine eigenen Schwachstellen.</div>
          <div class="small muted" style="margin-top:6px">Gespeichert: ${MyPuzzles.list().length} · später fällig: ${MyPuzzles.list().filter(x => (x.reps || 0) < REVIEW_DAYS.length && x.due > Date.now()).length}</div></div>`
       : '<div class="status-box">Keine Rätsel für dieses Thema gefunden.</div>') + this.themesHtml();
     this.bindCommon(p);
     board.movable = -1; board.set(new C.Position(), {}); setStrip('top', null); setStrip('bottom', null);
   },
   tabsHtml() {
-    return `<div class="seg" style="margin-bottom:10px"><button class="${this.view === 'train' && !this.rush ? 'active' : ''}" data-act="view" data-arg="train">🧩 Training</button><button class="${this.view === 'rush' || this.rush ? 'active' : ''}" data-act="view" data-arg="rush">⚡ Rush</button></div>`;
+    return `<div class="seg" style="margin-bottom:10px"><button class="${this.view === 'train' && !this.rush ? 'active' : ''}" data-act="view" data-arg="train"><i class="ic i-puzzle"></i> Training</button><button class="${this.view === 'rush' || this.rush ? 'active' : ''}" data-act="view" data-arg="rush"><i class="ic i-zap"></i> Rush</button></div>`;
   },
   themesHtml() {
     const due = MyPuzzles.due().length;
@@ -1528,11 +1551,11 @@ const Puzzles = {
     const p = $('panel-puzzle'), s = this.st, pz = this.cur;
     if (this.view === 'rush' && !this.rush) {
       const rec = store.get('rushRecords', {});
-      p.innerHTML = this.tabsHtml() + `<h2>⚡ Rätsel-Rush</h2><p class="muted small">Löse so viele Rätsel wie möglich. Sie starten leicht und werden mit jedem gelösten Rätsel schwerer. Nach 3 Fehlern ist Schluss.</p>
+      p.innerHTML = this.tabsHtml() + `<h2><i class="ic i-zap"></i> Rätsel-Rush</h2><p class="muted small">Löse so viele Rätsel wie möglich. Sie starten leicht und werden mit jedem gelösten Rätsel schwerer. Nach 3 Fehlern ist Schluss.</p>
         <div class="rush-modes">
-          <button class="rush-card" data-act="rush" data-arg="r3"><span>⏱️</span><b>3 Minuten</b><small>Rekord: ${rec.r3 || 0}</small></button>
-          <button class="rush-card" data-act="rush" data-arg="r5"><span>⏳</span><b>5 Minuten</b><small>Rekord: ${rec.r5 || 0}</small></button>
-          <button class="rush-card" data-act="rush" data-arg="surv"><span>❤️</span><b>Survival</b><small>ohne Zeitlimit · Rekord: ${rec.surv || 0}</small></button>
+          <button class="rush-card" data-act="rush" data-arg="r3"><span><i class="ic i-timer"></i></span><b>3 Minuten</b><small>Rekord: ${rec.r3 || 0}</small></button>
+          <button class="rush-card" data-act="rush" data-arg="r5"><span><i class="ic i-hourglass"></i></span><b>5 Minuten</b><small>Rekord: ${rec.r5 || 0}</small></button>
+          <button class="rush-card" data-act="rush" data-arg="surv"><span><i class="ic i-heart"></i></span><b>Survival</b><small>ohne Zeitlimit · Rekord: ${rec.surv || 0}</small></button>
         </div>`;
       this.bindCommon(p);
       return;
@@ -1555,17 +1578,17 @@ const Puzzles = {
     const statusCls = this.solved && !this.failed ? 'good' : this.msg.startsWith('✗') ? 'bad' : '';
     const done = this.solved;
     const rate = s.tries ? Math.round(100 * s.solved / s.tries) : 0;
-    p.innerHTML = this.tabsHtml() + `<div class="row"><div><div class="muted small">${pz.own ? '⭐ Fehler-Training' : 'Deine Rätsel-Wertung'}</div>
+    p.innerHTML = this.tabsHtml() + `<div class="row"><div><div class="muted small">${pz.own ? '<i class="ic i-star"></i> Fehler-Training' : 'Deine Rätsel-Wertung'}</div>
         <div class="rating-big">${pz.own ? MyPuzzles.due().length + '<span class="muted small" style="font-size:14px"> fällig</span>' : Math.round(s.rating) + ' ' + delta}</div></div>
-        <div style="text-align:right"><div class="muted small">Serie</div><div class="rating-big">🔥${s.streak}</div></div></div>
+        <div style="text-align:right"><div class="muted small">Serie</div><div class="rating-big"><i class="ic i-flame"></i>${s.streak}</div></div></div>
       <div class="status-box ${statusCls}">
         ${this.busy && !this.game.moves.length && pz.last ? 'Gegner zieht …' : `<b>${side} am Zug</b> – finde den besten Zug${userMoves > 1 ? ` <span class="muted">(${userMoves} Züge)</span>` : ''}`}
         ${this.msg ? `<div style="margin-top:6px">${this.msg}</div>` : ''}
       </div>
       ${done || this.failed ? `<div>${pz.own ? '' : `<span class="pill">Rätsel #${pz.id + 1}</span><span class="pill">Wertung ${pz.rating}</span>`}${pz.themes.map(t => `<span class="pill">${t}</span>`).join('')}</div>` : ''}
       <div class="btn-row">
-        <button class="btn" data-act="hint" ${done ? 'disabled' : ''}>💡 Hinweis</button>
-        <button class="btn" data-act="sol" ${done ? 'disabled' : ''}>👁 Lösung</button>
+        <button class="btn" data-act="hint" ${done ? 'disabled' : ''}><i class="ic i-lightbulb"></i> Hinweis</button>
+        <button class="btn" data-act="sol" ${done ? 'disabled' : ''}><i class="ic i-eye"></i> Lösung</button>
       </div>
       <button class="btn ${done ? 'primary' : ''} full" data-act="next">${done ? 'Nächstes Rätsel →' : 'Überspringen →'}</button>
       ${this.themesHtml()}
@@ -1780,8 +1803,8 @@ const Analysis = {
     EvalBar.set(this.evals[this.ply] != null ? this.evals[this.ply] : null);
     const r = this.record;
     const topColor = board.flipped ? 0 : 1;
-    setStrip('top', { avatar: topColor ? '♚' : '♔', name: topColor ? r.black : r.white, pos, color: topColor });
-    setStrip('bottom', { avatar: topColor ? '♔' : '♚', name: topColor ? r.white : r.black, pos, color: topColor ^ 1 });
+    setStrip('top', { avatar: sideAvatar(topColor), name: topColor ? r.black : r.white, pos, color: topColor });
+    setStrip('bottom', { avatar: sideAvatar(topColor ^ 1), name: topColor ? r.white : r.black, pos, color: topColor ^ 1 });
   },
 
   go(ply) {
@@ -1871,7 +1894,7 @@ const Analysis = {
       const curGame = Play.game && Play.game.moves.length;
       p.innerHTML = `<h2>Partieanalyse</h2>
         <p class="muted small">Die Engine bewertet jeden Zug, berechnet deine Genauigkeit und zeigt dir Fehler und bessere Züge.</p>
-        <div class="btn-row"><button class="btn" data-act="free">🔍 Analysebrett</button><button class="btn" data-act="editor">✏️ Stellung aufbauen</button></div>
+        <div class="btn-row"><button class="btn" data-act="free"><i class="ic i-search"></i> Analysebrett</button><button class="btn" data-act="editor"><i class="ic i-pencil"></i> Stellung aufbauen</button></div>
         ${curGame ? '<button class="btn primary full" data-act="cur">Aktuelle Partie analysieren</button>' : ''}
         <h3>Gespeicherte Partien</h3>${listHtml}
         <h3>PGN einfügen</h3>
@@ -1881,26 +1904,26 @@ const Analysis = {
     } else {
       const s = this.summary;
       const r = this.record;
-      p.innerHTML = `<div class="row"><h2>Analyse</h2><button class="btn small" data-act="close">← Partien</button></div>
+      p.innerHTML = `<div class="row"><h2>Analyse</h2><button class="btn small" data-act="close"><i class="ic i-arrow-left"></i> Partien</button></div>
         <div class="muted small">${esc(r.white)} – ${esc(r.black)} · ${r.result || ''}</div>
         ${this.running ? `<div class="progress"><div id="anaProg"></div></div><div class="muted small" id="anaProgTxt">Analysiere …</div>` : ''}
         ${this.done && s ? `<div class="acc-row">
-            <div class="acc-box white"><div class="muted small">♔ ${esc(r.white)}</div><div class="acc">${s[0].acc.toFixed(1)}</div><div class="muted small">Genauigkeit${s[0].elo ? ` · ~${s[0].elo} Elo` : ''}</div></div>
-            <div class="acc-box black"><div class="muted small">♚ ${esc(r.black)}</div><div class="acc">${s[1].acc.toFixed(1)}</div><div class="muted small">Genauigkeit${s[1].elo ? ` · ~${s[1].elo} Elo` : ''}</div></div>
+            <div class="acc-box white"><div class="muted small"><i class="ic i-chess-king"></i> ${esc(r.white)}</div><div class="acc">${s[0].acc.toFixed(1)}</div><div class="muted small">Genauigkeit${s[0].elo ? ` · ~${s[0].elo} Elo` : ''}</div></div>
+            <div class="acc-box black"><div class="muted small"><i class="ic i-chess-king-f"></i> ${esc(r.black)}</div><div class="acc">${s[1].acc.toFixed(1)}</div><div class="muted small">Genauigkeit${s[1].elo ? ` · ~${s[1].elo} Elo` : ''}</div></div>
           </div>
           <table class="cls-table">${CLS_ORDER.map(k => `<tr><td class="n ${s[0].counts[k] ? '' : 'zero'}">${s[0].counts[k]}</td><td><span class="cls-dot" style="background:${CLS[k].color}">${CLS[k].sym}</span> ${CLS[k].name}</td><td class="n ${s[1].counts[k] ? '' : 'zero'}">${s[1].counts[k]}</td></tr>`).join('')}</table>` : ''}
         <div style="height:8px"></div>
-        ${this.done && this.addedMistakes ? `<div class="status-box good small">⭐ <b>${this.addedMistakes} ${this.addedMistakes === 1 ? 'Fehler' : 'Fehler'}</b> ins Fehler-Training übernommen. <button class="btn small" data-act="mistakes">Jetzt üben</button></div>` : ''}
+        ${this.done && this.addedMistakes ? `<div class="status-box good small"><i class="ic i-star"></i> <b>${this.addedMistakes} ${this.addedMistakes === 1 ? 'Fehler' : 'Fehler'}</b> ins Fehler-Training übernommen. <button class="btn small" data-act="mistakes">Jetzt üben</button></div>` : ''}
         <svg class="graph" id="anaGraph" viewBox="0 0 400 90" preserveAspectRatio="none"></svg>
         <div class="explain" id="anaExplain"></div>
         <div class="btn-row">
-          <button class="btn small" data-act="nextErr">⚠ Nächster Fehler</button>
-          <button class="btn small" data-act="best">${this.showBest ? '🔵 Pfeil aus' : '🔵 Bester Zug'}</button>
-          <button class="btn small" data-act="flip">⇅ Drehen</button>
+          <button class="btn small" data-act="nextErr"><i class="ic i-triangle-alert"></i> Nächster Fehler</button>
+          <button class="btn small" data-act="best">${this.showBest ? '<i class="ic i-eye"></i> Pfeil aus' : '<i class="ic i-eye"></i> Bester Zug'}</button>
+          <button class="btn small" data-act="flip"><i class="ic i-arrow-up-down"></i> Drehen</button>
         </div>
         <div class="movelist" id="anaMoves"></div>
-        <div class="btn-row"><button class="btn small" data-act="fromhere">♟ Ab hier spielen</button><button class="btn small" data-act="board">🔍 Analysebrett</button></div>
-        <div class="btn-row"><button class="btn small" data-act="pgn">📋 PGN kopieren</button><button class="btn small" data-act="redo">↻ Neu analysieren</button></div>
+        <div class="btn-row"><button class="btn small" data-act="fromhere"><i class="ic i-swords"></i> Ab hier spielen</button><button class="btn small" data-act="board"><i class="ic i-search"></i> Analysebrett</button></div>
+        <div class="btn-row"><button class="btn small" data-act="pgn"><i class="ic i-clipboard-copy"></i> PGN kopieren</button><button class="btn small" data-act="redo"><i class="ic i-refresh-cw"></i> Neu analysieren</button></div>
         ${settings}`;
       const graph = $('anaGraph');
       graph.onclick = e => {
@@ -1962,7 +1985,7 @@ $('modal').addEventListener('click', e => { if (e.target.id === 'modal') hideMod
 
 function copyText(t, what) {
   what = what || 'PGN';
-  const done = () => showModal(`<h2>📋 Kopiert</h2><p class="muted">${what} ist in der Zwischenablage.</p><button class="btn full" data-act="c">OK</button>`, { c: hideModal });
+  const done = () => showModal(`<h2><i class="ic i-clipboard-copy"></i> Kopiert</h2><p class="muted">${what} ist in der Zwischenablage.</p><button class="btn full" data-act="c">OK</button>`, { c: hideModal });
   const fallback = () => {
     showModal(`<h2>${what}</h2><textarea readonly style="min-height:180px">${esc(t)}</textarea><button class="btn full" data-act="c">Schließen</button>`, { c: hideModal });
   };
@@ -1992,7 +2015,7 @@ function markActivity() {
 // Lektionen in Pfad-Reihenfolge; nach jedem Kapitel ein Wiederholungs-Knoten
 const ALL_LESSONS = LESSONS.flatMap((u, ui) => [
   ...u.lessons.map(l => ({ unit: u, ui, lesson: l })),
-  { unit: u, ui, lesson: { id: 'rev-' + u.id, title: 'Wiederholung', icon: '🔁', review: true } }
+  { unit: u, ui, lesson: { id: 'rev-' + u.id, title: 'Wiederholung', icon: 'repeat', review: true } }
 ]);
 const shuffle = a => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
 const TEST_TYPES = ['quiz', 'move', 'mate', 'check', 'line'];
@@ -2028,12 +2051,12 @@ const Learn = {
     const canMix = doneCount > 0;
     let html = `<div class="learn-head">
         <div><h1>Lernpfad</h1><p class="muted">Von null auf Schach – Schritt für Schritt.</p></div>
-        <div class="chips"><span class="chip">🔥 ${act.streak} ${act.streak === 1 ? 'Tag' : 'Tage'}</span><span class="chip">⚡ ${this.st.xp} XP</span><span class="chip">🎓 ${doneCount}/${total}</span></div>
+        <div class="chips"><span class="chip"><i class="ic i-flame"></i> ${act.streak} ${act.streak === 1 ? 'Tag' : 'Tage'}</span><span class="chip"><i class="ic i-zap"></i> ${this.st.xp} XP</span><span class="chip"><i class="ic i-graduation-cap"></i> ${doneCount}/${total}</span></div>
       </div>
       <div class="learn-actions">
-        <button class="btn primary" data-act="mix" ${canMix ? '' : 'disabled'}>🔁 Übungs-Mix</button>
-        <button class="btn" data-act="endgames">🏁 Endspiel-Trainer</button>
-        <button class="btn" data-act="placement">🎯 Einstufungspartie</button>
+        <button class="btn primary" data-act="mix" ${canMix ? '' : 'disabled'}><i class="ic i-repeat"></i> Übungs-Mix</button>
+        <button class="btn" data-act="endgames"><i class="ic i-flag"></i> Endspiel-Trainer</button>
+        <button class="btn" data-act="placement"><i class="ic i-target"></i> Einstufungspartie</button>
       </div>`;
     let lastUi = -1;
     ALL_LESSONS.forEach((x, k) => {
@@ -2044,14 +2067,14 @@ const Learn = {
         const uDone = u.lessons.filter(q => this.st.done[q.id] != null).length;
         const firstK = ALL_LESSONS.findIndex(q => q.ui === ui);
         const canJump = !this.isUnlocked(firstK) && ui > 0;
-        html += `<div class="unit-banner u${ui % 8}"><div class="ub-ic">${u.icon}</div><div><div class="ub-k">Kapitel ${ui + 1}</div><b>${u.title}</b><div class="ub-d">${u.desc}</div></div>
-          ${canJump ? `<button class="ub-jump" data-act="jump" data-arg="${ui}">⏩ Springen</button>` : `<div class="ub-p">${uDone}/${u.lessons.length}</div>`}</div><div class="path">`;
+        html += `<div class="unit-banner u${ui % 8}"><div class="ub-ic">${renderIcon(u.icon)}</div><div><div class="ub-k">Kapitel ${ui + 1}</div><b>${u.title}</b><div class="ub-d">${u.desc}</div></div>
+          ${canJump ? `<button class="ub-jump" data-act="jump" data-arg="${ui}"><i class="ic i-fast-forward"></i> Springen</button>` : `<div class="ub-p">${uDone}/${u.lessons.length}</div>`}</div><div class="path">`;
       }
       const stars = this.st.done[l.id];
       const unlocked = this.isUnlocked(k), current = k === next;
       const cls = stars != null ? 'done' : current ? 'current' : unlocked ? 'open' : 'locked';
       const xoff = Math.round(Math.sin((k + 1) * 1.1) * Math.max(20, Math.min(70, (Math.min(window.innerWidth, document.documentElement.clientWidth) - 200) / 2)));
-      const icon = stars != null ? (l.review ? '🔁' : '✓') : unlocked ? l.icon : '🔒';
+      const icon = stars != null ? ico(l.review ? 'repeat' : 'check') : unlocked ? renderIcon(l.icon) : ico('lock');
       html += `<div class="node-wrap" style="transform:translateX(${xoff}px)">
         ${current ? '<div class="go-bubble">LOS!</div>' : ''}
         <button class="node ${cls} ${l.review ? 'review' : ''} u${ui % 8}" data-act="open" data-arg="${k}" ${unlocked ? '' : 'disabled'}>${icon}</button>
@@ -2059,7 +2082,7 @@ const Learn = {
         ${stars ? `<div class="node-stars">${'★'.repeat(stars)}<span>${'★'.repeat(3 - stars)}</span></div>` : stars === 0 ? '<div class="node-stars skipped">übersprungen</div>' : ''}
       </div>`;
     });
-    html += `</div><div class="path-end">${next == null ? '🏆 Du hast den ganzen Lernpfad geschafft! Halte dein Wissen mit dem Übungs-Mix frisch.' : '🏆 Am Ende wartet die Meisterprüfung.'}</div>`;
+    html += `</div><div class="path-end">${next == null ? '<i class="ic i-trophy"></i> Du hast den ganzen Lernpfad geschafft! Halte dein Wissen mit dem Übungs-Mix frisch.' : '<i class="ic i-trophy"></i> Am Ende wartet die Meisterprüfung.'}</div>`;
     $('learn').innerHTML = html;
     bind($('learn'), {
       open: k => this.start(+k),
@@ -2075,10 +2098,10 @@ const Learn = {
   renderEndgames() {
     this.view = 'endgames';
     const eg = this.st.endgames || {};
-    $('learn').innerHTML = `<div class="learn-head"><div><h1>🏁 Endspiel-Trainer</h1><p class="muted">Die wichtigsten Endspiel-Techniken – gegen die Engine, die sich bestmöglich verteidigt.</p></div>
-        <button class="btn" data-act="back">← Lernpfad</button></div>
+    $('learn').innerHTML = `<div class="learn-head"><div><h1><i class="ic i-flag"></i> Endspiel-Trainer</h1><p class="muted">Die wichtigsten Endspiel-Techniken – gegen die Engine, die sich bestmöglich verteidigt.</p></div>
+        <button class="btn" data-act="back"><i class="ic i-arrow-left"></i> Lernpfad</button></div>
       <div class="eg-grid">${ENDGAMES.map(g => { const r = eg[g.id]; return `<button class="eg-card ${r ? 'done' : ''}" data-act="eg" data-arg="${g.id}">
-        <div class="eg-ic">${g.icon}</div><div><b>${g.title}</b><div class="muted small">${g.level} · ${g.step.t === 'hold' ? 'Remis halten' : g.step.t === 'promote' ? 'Bauer umwandeln' : 'Matt setzen'} · max. ${g.step.max} Züge</div>
+        <div class="eg-ic">${renderIcon(g.icon)}</div><div><b>${g.title}</b><div class="muted small">${g.level} · ${g.step.t === 'hold' ? 'Remis halten' : g.step.t === 'promote' ? 'Bauer umwandeln' : 'Matt setzen'} · max. ${g.step.max} Züge</div>
         ${r ? `<div class="eg-best">✓ geschafft${r.best ? ` · Bestwert ${r.best} Züge` : ''}</div>` : ''}</div></button>`; }).join('')}</div>`;
     bind($('learn'), { back: () => { this.view = null; this.renderPath(); }, eg: id => this.startEndgame(id) });
   },
@@ -2090,11 +2113,11 @@ const Learn = {
 
   renderOnboarding() {
     $('learn').innerHTML = `<div class="onboard">
-      <div class="ob-logo">♞</div>
+      <div class="ob-logo"><i class="ic i-chess-knight"></i></div>
       <h1>Willkommen beim Lernpfad!</h1>
       <p class="muted">Wie viel kannst du schon? Wähle deinen Start.</p>
-      <button class="ob-card" data-act="begin"><div class="ob-ic">🌱</div><div><b>Von Anfang an</b><span>Ich lerne Schach neu – vom Brett über die Figuren bis zum Matt.</span></div></button>
-      <button class="ob-card" data-act="test"><div class="ob-ic">🎯</div><div><b>Einstufungspartie</b><span>Ich kann schon spielen. Eine Partie gegen einen adaptiven Bot, der sich meiner Stärke anpasst – danach weiß die App, wo ich einsteige.</span></div></button>
+      <button class="ob-card" data-act="begin"><div class="ob-ic"><i class="ic i-sprout"></i></div><div><b>Von Anfang an</b><span>Ich lerne Schach neu – vom Brett über die Figuren bis zum Matt.</span></div></button>
+      <button class="ob-card" data-act="test"><div class="ob-ic"><i class="ic i-target"></i></div><div><b>Einstufungspartie</b><span>Ich kann schon spielen. Eine Partie gegen einen adaptiven Bot, der sich meiner Stärke anpasst – danach weiß die App, wo ich einsteige.</span></div></button>
     </div>`;
     bind($('learn'), {
       begin: () => { this.st.start = 'begin'; this.save(); this.renderPath(); },
@@ -2132,7 +2155,7 @@ const Learn = {
     const steps = [];
     for (const st of shuffle(pool)) { if (!steps.includes(st)) steps.push(st); if (steps.length >= 8) break; }
     if (!steps.length) return;
-    this.begin({ kind: 'mix', id: 'mix', title: 'Übungs-Mix', icon: '🔁', steps }, null);
+    this.begin({ kind: 'mix', id: 'mix', title: 'Übungs-Mix', icon: 'repeat', steps }, null);
   },
   startPlacement() { switchTab('play'); Play.startPlacement(); },
   startJump(ui) {
@@ -2140,7 +2163,7 @@ const Learn = {
     const pool = shuffle(before.flatMap(u => shuffle(unitSteps(u, TEST_TYPES)).slice(0, 3)));
     const steps = pool.slice(0, Math.min(8, Math.max(4, pool.length)));
     this.jumpUi = ui;
-    this.begin({ kind: 'jump', id: 'jump', title: 'Sprung zu Kapitel ' + (ui + 1), icon: '⏩', steps }, null);
+    this.begin({ kind: 'jump', id: 'jump', title: 'Sprung zu Kapitel ' + (ui + 1), icon: 'fast-forward', steps }, null);
   },
   markUnitsDone(uptoUi) {
     for (const x of ALL_LESSONS) if (x.ui < uptoUi && this.st.done[x.lesson.id] == null) this.st.done[x.lesson.id] = 0;
@@ -2223,10 +2246,10 @@ const Learn = {
     const st = this.step, n = this.lesson.steps.length;
     $('lessonTop').innerHTML = `<button class="lt-close" data-act="close" title="Lektion verlassen">✕</button>
       <div class="lt-prog"><div style="width:${Math.round(this.idx / n * 100)}%"></div></div>
-      <div class="lt-title">${this.lesson.icon} ${this.lesson.title}</div>`;
+      <div class="lt-title">${renderIcon(this.lesson.icon)} ${this.lesson.title}</div>`;
     bind($('lessonTop'), { close: () => { if (this.idx === 0 || confirm('Lektion verlassen? Dein Fortschritt in dieser Lektion geht verloren.')) this.exit(); } });
 
-    const typeLabel = { info: '📖 Lernen', quiz: '❓ Frage', collect: '⭐ Sammeln', move: '🎯 Finde den Zug', check: '⚡ Schach geben', mate: '👑 Matt in 1', any: '🛡️ Rette den König', line: '⚔️ Taktik', playmate: '🏆 Prüfung', promote: '👑 Umwandeln', hold: '🛡️ Halten' }[st.t];
+    const typeLabel = { info: '<i class="ic i-book-open"></i> Lernen', quiz: '<i class="ic i-circle-help"></i> Frage', collect: '<i class="ic i-star"></i> Sammeln', move: '<i class="ic i-target"></i> Finde den Zug', check: '<i class="ic i-zap"></i> Schach geben', mate: '<i class="ic i-crown"></i> Matt in 1', any: '<i class="ic i-shield"></i> Rette den König', line: '<i class="ic i-swords"></i> Taktik', playmate: '<i class="ic i-trophy"></i> Prüfung', promote: '<i class="ic i-crown"></i> Umwandeln', hold: '<i class="ic i-shield"></i> Halten' }[st.t];
     const testInfo = this.isTest ? ` · Frage ${this.idx + 1}/${n}` : '';
     let html = `<div class="lb-type">${typeLabel}${testInfo}</div><div class="lb-text">${mdText(st.t === 'quiz' ? st.q : st.text)}</div>`;
     if (st.t === 'quiz') {
@@ -2238,8 +2261,8 @@ const Learn = {
     if (['playmate', 'promote', 'hold'].includes(st.t)) html += `<div class="lb-count">Zug ${this.userMoves} von ${st.max}</div>`;
     if (this.fb) html += `<div class="lb-fb ${this.fb.ok ? 'ok' : 'bad'}"><b>${this.fb.title}</b>${this.fb.text ? ' ' + mdText(this.fb.text) : ''}</div>`;
     if (this.solved) html += `<button class="btn primary full lb-next" data-act="next">${this.idx + 1 >= n ? 'Abschließen' : 'Weiter'}</button>`;
-    else if (this.fb && !this.fb.ok && this.fb.retry) html += `<button class="btn full" data-act="retry">↻ Nochmal versuchen</button>`;
-    else if (!this.isTest && ['move', 'line', 'mate', 'check'].includes(st.t)) html += `<button class="btn small lb-skip" data-act="hint">💡 Tipp</button>`;
+    else if (this.fb && !this.fb.ok && this.fb.retry) html += `<button class="btn full" data-act="retry"><i class="ic i-refresh-cw"></i> Nochmal versuchen</button>`;
+    else if (!this.isTest && ['move', 'line', 'mate', 'check'].includes(st.t)) html += `<button class="btn small lb-skip" data-act="hint"><i class="ic i-lightbulb"></i> Tipp</button>`;
     $('lessonBar').innerHTML = html;
     bind($('lessonBar'), {
       opt: i => this.answer(+i),
@@ -2278,7 +2301,7 @@ const Learn = {
     if (!uci) return;
     this.hinted = true;
     this.fbSq = [C.parseSq(uci.slice(0, 2)), 'hint'];
-    this.fb = { ok: true, title: '💡 Tipp:', text: 'Ziehe mit der markierten Figur.' };
+    this.fb = { ok: true, title: 'Tipp:', text: 'Ziehe mit der markierten Figur.' };
     this.draw(); this.renderBar();
     this.fbSq = null;
   },
@@ -2352,7 +2375,7 @@ const Learn = {
         else this.wrong('Das ist kein Schach – der schwarze König wird nicht angegriffen.', true);
         break;
       case 'mate':
-        if (status === 'checkmate') this.success('Schachmatt! 🎉');
+        if (status === 'checkmate') this.success('Schachmatt!');
         else if (status === 'stalemate') this.wrong('Oh nein – **Patt**! Schwarz kann nicht ziehen, steht aber nicht im Schach. Das wäre nur Remis.', true);
         else if (this.pos.inCheck()) this.wrong('Schach – aber der König kann noch entkommen. Das ist noch kein Matt.', true);
         else this.wrong('Das ist noch kein Matt. Greife den König so an, dass er nicht entkommen kann.', true);
@@ -2384,8 +2407,8 @@ const Learn = {
         break;
       case 'hold':
         this.userMoves++;
-        if (status && status !== 'checkmate') { this.success('Remis! Du hast die Stellung gehalten. 🛡️'); return; }
-        if (this.userMoves >= st.max) { this.success(`${st.max} Züge gehalten – das ist Remis! 🛡️`); return; }
+        if (status && status !== 'checkmate') { this.success('Remis! Du hast die Stellung gehalten.'); return; }
+        if (this.userMoves >= st.max) { this.success(`${st.max} Züge gehalten – das ist Remis!`); return; }
         this.engineReply();
         break;
       case 'promote':
@@ -2397,7 +2420,7 @@ const Learn = {
         break;
       case 'playmate':
         this.userMoves++;
-        if (status === 'checkmate') { this.success(`Schachmatt in ${this.userMoves} Zügen! 🏆`); return; }
+        if (status === 'checkmate') { this.success(`Schachmatt in ${this.userMoves} Zügen!`); return; }
         if (status) { this.failPlay(status === 'stalemate' ? 'Patt! Schwarz hat keinen Zug mehr, steht aber nicht im Schach – Remis.' : 'Die Partie ist remis.'); return; }
         if (this.userMoves >= st.max) { this.failPlay(`${st.max} Züge sind um. Drücke den König schneller an den Rand!`); return; }
         this.engineReply();
@@ -2412,7 +2435,7 @@ const Learn = {
     const tok = this.token;
     const r = await engine.request({ cmd: 'search', fen: this.startFen, moves: this.history, timeMs: 600 });
     if (tok !== this.token) return;
-    if (!r || -r.score > 400) this.success('Umgewandelt – eine neue Dame! 👑');
+    if (!r || -r.score > 400) this.success('Umgewandelt – eine neue Dame!');
     else this.failPlay('Umgewandelt – aber die neue Dame geht sofort verloren. Sichere die Umwandlung vorher ab!');
   },
 
@@ -2442,7 +2465,7 @@ const Learn = {
     if (t === 'hold') {
       if (r.move.length === 5) { this.failPlay('Der Bauer ist durchgekommen. Bleib mit dem König vor dem Bauern und halte die Opposition!'); return; }
       if (st === 'checkmate') { this.failPlay('Schachmatt – leider verloren.'); return; }
-      if (st) { this.success('Remis! Du hast die Stellung gehalten. 🛡️'); return; }
+      if (st) { this.success('Remis! Du hast die Stellung gehalten.'); return; }
     } else if (st) { this.failPlay(st === 'insufficient' ? (t === 'promote' ? 'Der Bauer wurde geschlagen – jetzt ist es remis.' : 'Deine Figur wurde geschlagen – jetzt kann niemand mehr gewinnen.') : 'Die Partie ist remis.'); return; }
     this.locked = false;
     this.draw(true); this.renderBar();
@@ -2459,7 +2482,7 @@ const Learn = {
     const ui = this.jumpUi;
     if (ok) { this.markUnitsDone(ui); markActivity(); }
     Sound.play(ok ? 'end' : 'bad');
-    showModal(`<div style="font-size:54px">${ok ? '⏩' : '💪'}</div><h2>${ok ? 'Sprung geschafft!' : 'Noch nicht ganz'}</h2>
+    showModal(`<div class="modal-ic">${ico(ok ? 'fast-forward' : 'refresh-cw')}</div><h2>${ok ? 'Sprung geschafft!' : 'Noch nicht ganz'}</h2>
       <p class="muted">${ok ? `Kapitel ${ui + 1} „${LESSONS[ui].title}“ ist freigeschaltet.` : 'Zu viele Fehler – arbeite dich lieber Schritt für Schritt dorthin vor. Du schaffst das!'}</p>
       <button class="btn primary full" data-act="ok">Zum Lernpfad</button>`, { ok: () => { hideModal(); this.exit(); } });
   },
@@ -2471,7 +2494,7 @@ const Learn = {
       const prev = eg[id], record = !prev || !prev.best || moves < prev.best;
       eg[id] = { best: prev && prev.best ? Math.min(prev.best, moves) : moves };
       this.st.xp += 15; this.save(); markActivity(); Sound.play('end');
-      showModal(`<div style="font-size:54px">${this.lesson.icon}</div><h2>Endspiel gemeistert!</h2>
+      showModal(`<div class="modal-ic">${renderIcon(this.lesson.icon)}</div><h2>Endspiel gemeistert!</h2>
         <p class="muted">${this.lesson.title} in <b>${moves}</b> Zügen${record && prev ? ' – neuer Bestwert!' : ''}</p><div class="xp-gain">+15 XP</div>
         <button class="btn primary full" data-act="again">Nochmal</button><button class="btn full" data-act="list">Zum Endspiel-Trainer</button>`, {
         again: () => { hideModal(); this.startEndgame(id); },
@@ -2483,7 +2506,7 @@ const Learn = {
       const xp = 5 + stars * 5;
       this.st.xp += xp; this.save(); markActivity(); Sound.play('end');
       showModal(`<div class="finish-stars">${[0, 1, 2].map(i => `<span class="${i < stars ? 'on' : ''}" style="animation-delay:${i * .15}s">★</span>`).join('')}</div>
-        <h2>Übungs-Mix geschafft!</h2><p class="muted">${this.mistakes === 0 ? 'fehlerfrei 🎯' : this.mistakes + ' Fehler'} · Wiederholung festigt das Wissen.</p>
+        <h2>Übungs-Mix geschafft!</h2><p class="muted">${this.mistakes === 0 ? 'fehlerfrei <i class="ic i-target"></i>' : this.mistakes + ' Fehler'} · Wiederholung festigt das Wissen.</p>
         <div class="xp-gain">+${xp} XP</div>
         <button class="btn primary full" data-act="again">Noch ein Mix</button>
         <button class="btn full" data-act="path">Zum Lernpfad</button>`, { again: () => { hideModal(); this.startMix(); }, path: () => { hideModal(); this.exit(); } });
@@ -2499,8 +2522,8 @@ const Learn = {
     const unitDone = ALL_LESSONS.filter(x => x.unit === this.unit).every(x => this.st.done[x.lesson.id] != null);
     const nextK = this.k + 1 < ALL_LESSONS.length ? this.k + 1 : null;
     showModal(`<div class="finish-stars">${[0, 1, 2].map(i => `<span class="${i < stars ? 'on' : ''}" style="animation-delay:${i * .15}s">★</span>`).join('')}</div>
-      <h2>${unitDone && first ? 'Kapitel geschafft! 🏆' : this.lesson.review ? 'Wiederholung geschafft!' : 'Lektion geschafft!'}</h2>
-      <p class="muted">${this.lesson.title} · ${this.mistakes === 0 ? 'fehlerfrei 🎯' : this.mistakes + (this.mistakes === 1 ? ' Fehler' : ' Fehler')}</p>
+      <h2>${unitDone && first ? 'Kapitel geschafft! <i class="ic i-trophy"></i>' : this.lesson.review ? 'Wiederholung geschafft!' : 'Lektion geschafft!'}</h2>
+      <p class="muted">${this.lesson.title} · ${this.mistakes === 0 ? 'fehlerfrei <i class="ic i-target"></i>' : this.mistakes + (this.mistakes === 1 ? ' Fehler' : ' Fehler')}</p>
       <div class="xp-gain">+${xp} XP</div>
       ${nextK != null ? `<button class="btn primary full" data-act="cont">Nächste Lektion: ${ALL_LESSONS[nextK].lesson.title}</button>` : ''}
       <button class="btn full" data-act="path">Zum Lernpfad</button>`, {
@@ -2544,22 +2567,22 @@ const Openings = {
     const due = this.dueLines().length, rec = this.recommendedGroup();
     const learnedTotal = OPEN_LINES.filter(x => this.isLearned(x.l.id)).length;
     let html = `<div class="learn-head"><div><h1>Eröffnungen</h1><p class="muted">Lerne Repertoire-Linien Zug für Zug – mit Wiederholungen in wachsenden Abständen.</p></div>
-      <div class="chips"><span class="chip">📚 ${learnedTotal}/${OPEN_LINES.length} Linien gelernt</span></div></div>
-      ${due ? `<button class="due-banner" data-act="due"><span>🔁</span><div><b>${due} ${due === 1 ? 'Linie ist' : 'Linien sind'} zur Wiederholung fällig</b><div class="muted small">Kurz durchspielen, damit sie im Kopf bleiben</div></div><span>›</span></button>` : ''}
+      <div class="chips"><span class="chip"><i class="ic i-book-marked"></i> ${learnedTotal}/${OPEN_LINES.length} Linien gelernt</span></div></div>
+      ${due ? `<button class="due-banner" data-act="due"><span><i class="ic i-repeat"></i></span><div><b>${due} ${due === 1 ? 'Linie ist' : 'Linien sind'} zur Wiederholung fällig</b><div class="muted small">Kurz durchspielen, damit sie im Kopf bleiben</div></div><span>›</span></button>` : ''}
       <div class="op-filters">
-        <div class="seg">${[['all', 'Alle'], ...OPENING_GROUPS.map(g => [g.id, g.icon + ' ' + g.name])].map(([v, l]) => `<button class="${this.st.group === v ? 'active' : ''}" data-act="group" data-arg="${v}">${l}</button>`).join('')}</div>
-        <div class="seg">${[['all', 'Beide Farben'], ['w', '♔ Als Weiß'], ['b', '♚ Als Schwarz']].map(([v, l]) => `<button class="${this.st.color === v ? 'active' : ''}" data-act="color" data-arg="${v}">${l}</button>`).join('')}</div>
+        <div class="seg">${[['all', 'Alle'], ...OPENING_GROUPS.map(g => [g.id, renderIcon(g.icon) + ' ' + g.name])].map(([v, l]) => `<button class="${this.st.group === v ? 'active' : ''}" data-act="group" data-arg="${v}">${l}</button>`).join('')}</div>
+        <div class="seg">${[['all', 'Beide Farben'], ['w', '<i class="ic i-chess-king"></i> Als Weiß'], ['b', '<i class="ic i-chess-king-f"></i> Als Schwarz']].map(([v, l]) => `<button class="${this.st.color === v ? 'active' : ''}" data-act="color" data-arg="${v}">${l}</button>`).join('')}</div>
       </div>`;
     for (const g of OPENING_GROUPS) {
       if (this.st.group !== 'all' && this.st.group !== g.id) continue;
       const ops = OPENINGS.filter(o => o.group === g.id && (this.st.color === 'all' || o.side === this.st.color));
       if (!ops.length) continue;
-      html += `<div class="op-group"><div class="og-head"><span class="og-ic">${g.icon}</span><div><b>${g.name}</b> <span class="muted">· ${g.range}</span>${g.id === rec.id ? ' <span class="pill rec">⭐ Empfohlen für dich</span>' : ''}<div class="muted small">${g.why}</div></div></div>
+      html += `<div class="op-group"><div class="og-head"><span class="og-ic">${renderIcon(g.icon)}</span><div><b>${g.name}</b> <span class="muted">· ${g.range}</span>${g.id === rec.id ? ' <span class="pill rec"><i class="ic i-star"></i> Empfohlen für dich</span>' : ''}<div class="muted small">${g.why}</div></div></div>
         <div class="op-grid">${ops.map(o => {
           const learned = o.lines.filter(l => this.isLearned(l.id)).length;
           const started = o.lines.filter(l => this.lineStat(l.id).reps > 0).length;
           return `<button class="op-card" data-act="open" data-arg="${o.id}">
-            <div class="row"><span class="op-side ${o.side}">${o.side === 'w' ? '♔ Weiß' : '♚ Schwarz'}</span><span class="muted small">${o.eco}</span></div>
+            <div class="row"><span class="op-side ${o.side}">${o.side === 'w' ? '<i class="ic i-chess-king"></i> Weiß' : '<i class="ic i-chess-king-f"></i> Schwarz'}</span><span class="muted small">${o.eco}</span></div>
             <b>${o.name}</b><div class="muted small op-why">${o.why}</div>
             <div class="op-prog"><div style="width:${learned / o.lines.length * 100}%"></div></div>
             <div class="muted small">${learned}/${o.lines.length} gelernt${started > learned ? ` · ${started - learned} in Arbeit` : ''}</div></button>`;
@@ -2708,35 +2731,35 @@ const Openings = {
     const p = $('panel-openings'), o = this.op;
     if (!o) return;
     const g = OPENING_GROUPS.find(x => x.id === o.group);
-    const head = `<div class="panel-head"><button class="btn small" data-act="back">←</button><div><h2>${o.name}</h2><div class="muted">${o.side === 'w' ? '♔ als Weiß' : '♚ als Schwarz'} · ${o.eco} · ${g.icon} ${g.range}</div></div></div>`;
+    const head = `<div class="panel-head"><button class="btn small" data-act="back"><i class="ic i-arrow-left"></i></button><div><h2>${o.name}</h2><div class="muted">${o.side === 'w' ? '<i class="ic i-chess-king"></i> als Weiß' : '<i class="ic i-chess-king-f"></i> als Schwarz'} · ${o.eco} · ${renderIcon(g.icon)} ${g.range}</div></div></div>`;
     let html = head;
     if (this.view === 'detail') {
       html += `<div class="status-box"><b>Warum diese Eröffnung?</b><div class="small" style="margin-top:4px">${o.why}</div></div>
         <div class="status-box"><b>Die Idee</b><div class="small" style="margin-top:4px">${o.idea}</div></div>
         <h3>Linien</h3>${o.lines.map(l => {
           const s = this.lineStat(l.id), now = Date.now();
-          const badge = s.reps === 0 ? '<span class="pill">Neu</span>' : s.due <= now ? '<span class="pill due">🔁 fällig</span>' : this.isLearned(l.id) ? '<span class="pill ok">✓ gelernt</span>' : `<span class="pill">${'★'.repeat(Math.min(s.streak, 3))}${'☆'.repeat(Math.max(0, 2 - s.streak))} lernen</span>`;
+          const badge = s.reps === 0 ? '<span class="pill">Neu</span>' : s.due <= now ? '<span class="pill due"><i class="ic i-repeat"></i> fällig</span>' : this.isLearned(l.id) ? '<span class="pill ok">✓ gelernt</span>' : `<span class="pill">${'★'.repeat(Math.min(s.streak, 3))}${'☆'.repeat(Math.max(0, 2 - s.streak))} lernen</span>`;
           return `<div class="line-item"><div><b>${l.name}</b> ${badge}<div class="muted small">${this.prepLine(l).length} Halbzüge${s.due > now && s.reps ? ' · wieder fällig in ' + Math.max(1, Math.round((s.due - now) / DAY)) + ' T.' : ''}</div></div>
-            <div class="li-btns"><button class="btn small" data-act="watch" data-arg="${l.id}">▶ Ansehen</button><button class="btn small primary-s" data-act="drill" data-arg="${l.id}">🎯 Üben</button></div></div>`;
+            <div class="li-btns"><button class="btn small" data-act="watch" data-arg="${l.id}"><i class="ic i-play"></i> Ansehen</button><button class="btn small primary-s" data-act="drill" data-arg="${l.id}"><i class="ic i-target"></i> Üben</button></div></div>`;
         }).join('')}
-        <div style="height:8px"></div><button class="btn primary full" data-act="all">🎯 Alle Linien üben</button>`;
+        <div style="height:8px"></div><button class="btn primary full" data-act="all"><i class="ic i-target"></i> Alle Linien üben</button>`;
     } else if (this.view === 'watch') {
       const mv = this.line._moves, c = this.ply > 0 ? mv[this.ply - 1].comment : '';
       html += `<h3>${this.line.name}</h3>
-        <div class="explain">${this.ply === 0 ? 'Startstellung – blättere mit ▶ durch die Züge. Der grüne Pfeil zeigt den nächsten Zug.' : `<b>${de(this.game.moves[this.ply - 1].san)}</b>${c ? ' – ' + esc(c) : ''}`}</div>
+        <div class="explain">${this.ply === 0 ? 'Startstellung – blättere mit <i class="ic i-play"></i> durch die Züge. Der grüne Pfeil zeigt den nächsten Zug.' : `<b>${de(this.game.moves[this.ply - 1].san)}</b>${c ? ' – ' + esc(c) : ''}`}</div>
         <div class="movelist" id="opMoves"></div>
-        <button class="btn primary full" data-act="drill" data-arg="${this.line.id}">🎯 Jetzt üben</button>`;
+        <button class="btn primary full" data-act="drill" data-arg="${this.line.id}"><i class="ic i-target"></i> Jetzt üben</button>`;
     } else {
       const total = this.line._moves.length, mine = this.line._moves.filter((x, i) => (i % 2) === this.mySide()).length;
       const doneMine = this.game.moves.filter(m => m.side === this.mySide()).length;
-      html += `<h3>${this.queue ? '🔁 Wiederholung · ' : ''}${this.line.name}</h3>
+      html += `<h3>${this.queue ? '<i class="ic i-repeat"></i> Wiederholung · ' : ''}${this.line.name}</h3>
         <div class="progress"><div style="width:${this.game.moves.length / total * 100}%"></div></div>
         <div class="muted small">Dein Zug ${Math.min(doneMine + (this.done ? 0 : 1), mine)} von ${mine}</div>
-        ${this.done ? `<div class="status-box ${this.mistakes === 0 ? 'good' : ''}"><b>${this.mistakes === 0 ? '🎉 Perfekt gespielt!' : '✓ Linie geschafft'}</b><div class="small">${this.mistakes === 0 ? 'Nächste Wiederholung in ' + INTERVALS[Math.min(this.lineStat(this.line.id).streak - 1, INTERVALS.length - 1)] + ' Tag(en).' : this.mistakes + ' Fehler – die Linie kommt bald nochmal dran.'}</div></div>`
+        ${this.done ? `<div class="status-box ${this.mistakes === 0 ? 'good' : ''}"><b>${this.mistakes === 0 ? '<i class="ic i-party-popper"></i> Perfekt gespielt!' : '✓ Linie geschafft'}</b><div class="small">${this.mistakes === 0 ? 'Nächste Wiederholung in ' + INTERVALS[Math.min(this.lineStat(this.line.id).streak - 1, INTERVALS.length - 1)] + ' Tag(en).' : this.mistakes + ' Fehler – die Linie kommt bald nochmal dran.'}</div></div>`
         : `<div class="status-box ${this.fb ? (this.fb.ok ? 'good' : 'bad') : ''}">${this.fb ? esc(this.fb.text) : (this.locked ? 'Gegner zieht …' : `Spiele den Repertoire-Zug für ${this.mySide() === 0 ? 'Weiß' : 'Schwarz'}!`)}</div>`}
         <div class="movelist" id="opMoves"></div>
-        ${this.done ? (this.queue && this.queue.length ? `<button class="btn primary full" data-act="nextq">Weiter (${this.queue.length} übrig)</button>` : `<button class="btn primary full" data-act="drill" data-arg="${this.line.id}">↻ Nochmal üben</button>`)
-        : `<div class="btn-row"><button class="btn" data-act="hint">💡 Tipp</button><button class="btn" data-act="drill" data-arg="${this.line.id}">↻ Neu starten</button></div>`}
+        ${this.done ? (this.queue && this.queue.length ? `<button class="btn primary full" data-act="nextq">Weiter (${this.queue.length} übrig)</button>` : `<button class="btn primary full" data-act="drill" data-arg="${this.line.id}"><i class="ic i-refresh-cw"></i> Nochmal üben</button>`)
+        : `<div class="btn-row"><button class="btn" data-act="hint"><i class="ic i-lightbulb"></i> Tipp</button><button class="btn" data-act="drill" data-arg="${this.line.id}"><i class="ic i-refresh-cw"></i> Neu starten</button></div>`}
         <div style="height:6px"></div><button class="btn full" data-act="${this.queue ? 'list' : 'detail'}">${this.queue ? 'Wiederholung beenden' : 'Zur Eröffnung'}</button>`;
     }
     p.innerHTML = html;
@@ -2851,17 +2874,17 @@ const Free = {
   renderPanel() {
     const p = $('panel-free');
     const pos = this.pos();
-    p.innerHTML = `<div class="panel-head"><div class="big-ic">🔍</div><div><h2>Analysebrett</h2><div class="muted">Beide Seiten ziehen frei · ${pos.side === 0 ? 'Weiß' : 'Schwarz'} am Zug</div></div></div>
+    p.innerHTML = `<div class="panel-head"><div class="big-ic"><i class="ic i-search"></i></div><div><h2>Analysebrett</h2><div class="muted">Beide Seiten ziehen frei · ${pos.side === 0 ? 'Weiß' : 'Schwarz'} am Zug</div></div></div>
       <div class="row"><label class="chk"><input type="checkbox" id="freeEng" ${this.engineOn ? 'checked' : ''}> Engine-Vorschläge (3 beste Züge)</label></div>
       <div id="freeLines" class="eng-lines"></div>
       <div class="movelist" id="freeMoves"></div>
       <div class="btn-row">
-        <button class="btn small" data-act="flip">⇅ Drehen</button>
-        <button class="btn small" data-act="reset">↺ Startstellung</button>
-        <button class="btn small" data-act="edit">✏️ Bearbeiten</button>
+        <button class="btn small" data-act="flip"><i class="ic i-arrow-up-down"></i> Drehen</button>
+        <button class="btn small" data-act="reset"><i class="ic i-rotate-ccw"></i> Startstellung</button>
+        <button class="btn small" data-act="edit"><i class="ic i-pencil"></i> Bearbeiten</button>
       </div>
-      <button class="btn primary full" data-act="play">♟ Ab hier gegen den Bot spielen</button>
-      <div class="btn-row"><button class="btn small" data-act="fen">📋 FEN</button><button class="btn small" data-act="pgn">📋 PGN</button></div>
+      <button class="btn primary full" data-act="play"><i class="ic i-swords"></i> Ab hier gegen den Bot spielen</button>
+      <div class="btn-row"><button class="btn small" data-act="fen"><i class="ic i-clipboard-copy"></i> FEN</button><button class="btn small" data-act="pgn"><i class="ic i-clipboard-copy"></i> PGN</button></div>
       <h3>Stellung oder Partie laden</h3>
       <textarea id="freeIn" placeholder="FEN (z. B. r1bqkbnr/pppp1ppp/2n5/…) oder PGN einfügen"></textarea>
       <div style="height:6px"></div><button class="btn full" data-act="load">Laden</button>`;
@@ -2919,8 +2942,8 @@ function openPlayFrom(fen, side) {
   const p = new C.Position(fen);
   if (p.status() === 'checkmate' || p.status() === 'stalemate') { alert('In dieser Stellung ist die Partie schon vorbei.'); return; }
   const b = Play.bot.persona || Play.bot.human || Play.placement ? BOTS[3] : Play.bot;
-  showModal(`<h2>♟ Ab hier spielen</h2><p class="muted">${p.side === 0 ? 'Weiß' : 'Schwarz'} ist am Zug. Gegen ${b.emoji} ${b.name} (ca. ${b.elo}) – den Gegner kannst du danach unter „Neues Spiel“ ändern.</p>
-    <button class="btn primary full" data-act="w">♔ Ich spiele Weiß</button><button class="btn primary full" data-act="b">♚ Ich spiele Schwarz</button>
+  showModal(`<h2><i class="ic i-swords"></i> Ab hier spielen</h2><p class="muted">${p.side === 0 ? 'Weiß' : 'Schwarz'} ist am Zug. Gegen ${botAvatar(b)} ${b.name} (ca. ${b.elo}) – den Gegner kannst du danach unter „Neues Spiel“ ändern.</p>
+    <button class="btn primary full" data-act="w"><i class="ic i-chess-king"></i> Ich spiele Weiß</button><button class="btn primary full" data-act="b"><i class="ic i-chess-king-f"></i> Ich spiele Schwarz</button>
     <button class="btn full" data-act="c">Abbrechen</button>`, {
     w: () => { hideModal(); Play.botIdx = BOTS.indexOf(b); Play.startFrom(fen, 0); },
     b: () => { hideModal(); Play.botIdx = BOTS.indexOf(b); Play.startFrom(fen, 1); },
@@ -2995,7 +3018,7 @@ const Editor = {
     if (!el) return;
     const err = validateFen(this.fen());
     el.className = 'status-box ' + (err ? 'bad' : 'good');
-    el.innerHTML = err ? '⚠️ ' + err : '✓ Gültige Stellung';
+    el.innerHTML = err ? '<i class="ic i-triangle-alert"></i> ' + err : '✓ Gültige Stellung';
     $('edFen').value = this.fen();
     p_disable(['edAna', 'edPlay'], !!err);
   },
@@ -3003,22 +3026,22 @@ const Editor = {
     const p = $('panel-editor');
     const codes = 'KQRBNP';
     const pal = c => `<button class="pal ${this.tool === c ? 'active' : ''}" data-act="tool" data-arg="${c}">${pieceHtml(codes.indexOf(c.toUpperCase()) === -1 ? 0 : ((6 - codes.indexOf(c.toUpperCase())) | (c === c.toLowerCase() ? 8 : 0)))}</button>`;
-    p.innerHTML = `<div class="panel-head"><div class="big-ic">✏️</div><div><h2>Stellung aufbauen</h2><div class="muted">Figur wählen, dann aufs Feld tippen</div></div></div>
-      <div class="palette">${[...'KQRBNP'].map(pal).join('')}${[...'kqrbnp'].map(pal).join('')}<button class="pal eraser ${this.tool === 'x' ? 'active' : ''}" data-act="tool" data-arg="x">🧽</button></div>
+    p.innerHTML = `<div class="panel-head"><div class="big-ic"><i class="ic i-pencil"></i></div><div><h2>Stellung aufbauen</h2><div class="muted">Figur wählen, dann aufs Feld tippen</div></div></div>
+      <div class="palette">${[...'KQRBNP'].map(pal).join('')}${[...'kqrbnp'].map(pal).join('')}<button class="pal eraser ${this.tool === 'x' ? 'active' : ''}" data-act="tool" data-arg="x"><i class="ic i-eraser"></i></button></div>
       <p class="muted small">Tippe nochmal auf eine gleiche Figur, um sie zu entfernen.</p>
       <h3>Am Zug</h3>
-      <div class="seg">${[['w', '♔ Weiß'], ['b', '♚ Schwarz']].map(([v, l]) => `<button class="${this.side === v ? 'active' : ''}" data-act="side" data-arg="${v}">${l}</button>`).join('')}</div>
+      <div class="seg">${[['w', '<i class="ic i-chess-king"></i> Weiß'], ['b', '<i class="ic i-chess-king-f"></i> Schwarz']].map(([v, l]) => `<button class="${this.side === v ? 'active' : ''}" data-act="side" data-arg="${v}">${l}</button>`).join('')}</div>
       <h3>Rochade erlaubt</h3>
       <div class="castle-row">${[['K', 'Weiß kurz'], ['Q', 'Weiß lang'], ['k', 'Schwarz kurz'], ['q', 'Schwarz lang']].map(([k, l]) => `<label class="chk"><input type="checkbox" data-c="${k}" ${this.castle[k] ? 'checked' : ''}> ${l}</label>`).join('')}</div>
-      <div class="btn-row"><button class="btn small" data-act="start">Startstellung</button><button class="btn small" data-act="clear">Leeren</button><button class="btn small" data-act="flip">⇅ Drehen</button></div>
+      <div class="btn-row"><button class="btn small" data-act="start">Startstellung</button><button class="btn small" data-act="clear">Leeren</button><button class="btn small" data-act="flip"><i class="ic i-arrow-up-down"></i> Drehen</button></div>
       <div id="edStatus" class="status-box"></div>
-      <button class="btn primary full" id="edAna" data-act="ana">🔍 Analysieren</button>
+      <button class="btn primary full" id="edAna" data-act="ana"><i class="ic i-search"></i> Analysieren</button>
       <div style="height:6px"></div>
-      <button class="btn full" id="edPlay" data-act="play">♟ Gegen den Bot spielen</button>
+      <button class="btn full" id="edPlay" data-act="play"><i class="ic i-swords"></i> Gegen den Bot spielen</button>
       <h3>FEN</h3>
       <textarea id="edFen" style="min-height:56px"></textarea>
       <div style="height:6px"></div>
-      <div class="btn-row"><button class="btn small" data-act="loadfen">FEN übernehmen</button><button class="btn small" data-act="copy">📋 Kopieren</button></div>`;
+      <div class="btn-row"><button class="btn small" data-act="loadfen">FEN übernehmen</button><button class="btn small" data-act="copy"><i class="ic i-clipboard-copy"></i> Kopieren</button></div>`;
     bind(p, {
       tool: c => { this.tool = c; this.renderPanel(); },
       side: v => { this.side = v; this.renderPanel(); this.refresh(); },
@@ -3056,11 +3079,11 @@ function renderBoardNav() {
     info = `${dot}<b>${num}${m.side === 0 ? '.' : '…'} ${de(m.san)}</b>${c ? `<span class="muted nav-cls">${CLS[c].name}</span>` : ''}`;
   }
   if (play && Play.viewPly != null) info += ' <span class="pill">Rückblick</span>';
-  nav.innerHTML = `<button class="btn" data-act="first" ${ply === 0 ? 'disabled' : ''} title="Anfang">⏮</button>
-    <button class="btn" data-act="prev" ${ply === 0 ? 'disabled' : ''} title="Zurück (←)">◀</button>
+  nav.innerHTML = `<button class="btn" data-act="first" ${ply === 0 ? 'disabled' : ''} title="Anfang"><i class="ic i-chevron-first"></i></button>
+    <button class="btn" data-act="prev" ${ply === 0 ? 'disabled' : ''} title="Zurück (←)"><i class="ic i-chevron-left"></i></button>
     <div class="nav-info">${info}<span class="muted small">${ply}/${n}</span></div>
-    <button class="btn" data-act="next" ${ply >= n ? 'disabled' : ''} title="Vor (→)">▶</button>
-    <button class="btn" data-act="last" ${ply >= n ? 'disabled' : ''} title="Ende">⏭</button>`;
+    <button class="btn" data-act="next" ${ply >= n ? 'disabled' : ''} title="Vor (→)"><i class="ic i-chevron-right"></i></button>
+    <button class="btn" data-act="last" ${ply >= n ? 'disabled' : ''} title="Ende"><i class="ic i-chevron-last"></i></button>`;
   const go = fr ? p => Free.go(p) : op ? p => Openings.go(p) : ana ? p => Analysis.go(p) : p => Play.view(p);
   bind(nav, { first: () => go(0), prev: () => go(ply - 1), next: () => go(ply + 1), last: () => go(1e9) });
 }
@@ -3095,14 +3118,14 @@ const Home = {
     const hour = new Date().getHours();
     const greet = hour < 11 ? 'Guten Morgen' : hour < 18 ? 'Hallo' : 'Guten Abend';
     $('home').innerHTML = `
-      <div class="hero"><div class="hero-btns"><button data-act="pieces">🎨</button><button class="hero-sound" data-act="sound">${Sound.on ? '🔊' : '🔇'}</button></div><h1>${greet}! ♞</h1><p>Spiele gegen Bots, löse Rätsel und lerne aus deinen Fehlern – komplett offline.</p></div>
+      <div class="hero"><h1>${greet}!</h1><p>Spiele gegen Bots, löse Rätsel und lerne aus deinen Fehlern – komplett offline.</p></div>
       <div class="actions">
-        ${cur ? `<button class="action main" data-act="resume"><div class="ai">▶</div><div><b>Partie fortsetzen</b><span>gegen ${Play.bot.name} · Zug ${Math.ceil(Play.game.moves.length / 2)}</span></div></button>`
-        : `<button class="action main" data-act="play"><div class="ai">${BOTS[Play.botIdx].emoji}</div><div><b>Spielen</b><span>gegen ${BOTS[Play.botIdx].name} (ca. ${BOTS[Play.botIdx].elo})</span></div></button>`}
-        ${(() => { const nk = Learn.nextIndex(); return `<button class="action" data-act="learn"><div class="ai">🎓</div><div><b>Lernpfad</b><span>${nk == null ? 'Alles geschafft! Übe mit dem Mix' : 'Weiter mit: ' + ALL_LESSONS[nk].lesson.title} · ${ALL_LESSONS.filter(x => !x.lesson.review && Learn.st.done[x.lesson.id] != null).length}/${ALL_LESSONS.filter(x => !x.lesson.review).length}</span></div></button>`; })()}
-        ${(() => { const d = Openings.dueLines().length; return `<button class="action" data-act="openings"><div class="ai">📖</div><div><b>Eröffnungen</b><span>${d ? `🔁 ${d} Linie${d === 1 ? '' : 'n'} fällig` : OPENINGS.length + ' Eröffnungen nach Elo sortiert'}</span></div></button>`; })()}
-        <button class="action" data-act="puzzle"><div class="ai">🧩</div><div><b>Rätsel lösen</b><span>Deine Wertung: ${Math.round(ps.rating)} · Serie 🔥${ps.streak}</span></div></button>
-        <button class="action" data-act="analyse" ${last ? '' : 'disabled'}><div class="ai">📈</div><div><b>Letzte Partie analysieren</b><span>${last ? `${esc(last.white)} – ${esc(last.black)}` : 'Noch keine Partie gespielt'}</span></div></button>
+        ${cur ? `<button class="action main" data-act="resume"><div class="ai"><i class="ic i-play"></i></div><div><b>Partie fortsetzen</b><span>gegen ${Play.bot.name} · Zug ${Math.ceil(Play.game.moves.length / 2)}</span></div></button>`
+        : `<button class="action main" data-act="play"><div class="ai">${botAvatar(BOTS[Play.botIdx])}</div><div><b>Spielen</b><span>gegen ${BOTS[Play.botIdx].name} (ca. ${BOTS[Play.botIdx].elo})</span></div></button>`}
+        ${(() => { const nk = Learn.nextIndex(); return `<button class="action" data-act="learn"><div class="ai"><i class="ic i-graduation-cap"></i></div><div><b>Lernpfad</b><span>${nk == null ? 'Alles geschafft! Übe mit dem Mix' : 'Weiter mit: ' + ALL_LESSONS[nk].lesson.title} · ${ALL_LESSONS.filter(x => !x.lesson.review && Learn.st.done[x.lesson.id] != null).length}/${ALL_LESSONS.filter(x => !x.lesson.review).length}</span></div></button>`; })()}
+        ${(() => { const d = Openings.dueLines().length; return `<button class="action" data-act="openings"><div class="ai"><i class="ic i-book-open"></i></div><div><b>Eröffnungen</b><span>${d ? `<i class="ic i-repeat"></i> ${d} Linie${d === 1 ? '' : 'n'} fällig` : OPENINGS.length + ' Eröffnungen nach Elo sortiert'}</span></div></button>`; })()}
+        <button class="action" data-act="puzzle"><div class="ai"><i class="ic i-puzzle"></i></div><div><b>Rätsel lösen</b><span>Deine Wertung: ${Math.round(ps.rating)} · Serie <i class="ic i-flame"></i>${ps.streak}</span></div></button>
+        <button class="action" data-act="analyse" ${last ? '' : 'disabled'}><div class="ai"><i class="ic i-chart-line"></i></div><div><b>Letzte Partie analysieren</b><span>${last ? `${esc(last.white)} – ${esc(last.black)}` : 'Noch keine Partie gespielt'}</span></div></button>
       </div>
       <div class="cards">
         <div class="card"><div class="label">Rätsel-Wertung</div><div class="value">${Math.round(ps.rating)}</div>
@@ -3112,15 +3135,15 @@ const Home = {
           <div class="wdl"><div class="w" style="width:${w / tot * 100}%"></div><div class="d" style="width:${d / tot * 100}%"></div><div class="l" style="width:${l / tot * 100}%"></div></div></div>
         <div class="card"><div class="label">Ø Genauigkeit</div><div class="value">${avgAcc}${accs.length ? '<small style="font-size:18px">%</small>' : ''}</div>
           <div class="hint">${accs.length ? `aus deinen letzten ${accs.length} analysierten Partien` : 'Analysiere eine Partie, um sie zu sehen'}</div></div>
-        <div class="card"><div class="label">Tage-Serie</div><div class="value">🔥 ${getActivity().streak}</div>
-          <div class="hint">Lerne oder löse jeden Tag ein Rätsel · Rekord ${getActivity().best || 0} · ⚡ ${Learn.st.xp} XP</div></div>
+        <div class="card"><div class="label">Tage-Serie</div><div class="value"><i class="ic i-flame"></i> ${getActivity().streak}</div>
+          <div class="hint">Lerne oder löse jeden Tag ein Rätsel · Rekord ${getActivity().best || 0} · <i class="ic i-zap"></i> ${Learn.st.xp} XP</div></div>
       </div>
       <div style="height:16px"></div>
       <div class="two-col">
         <div class="card"><div class="row"><div class="label">Bot-Leiter</div><span class="muted small">${beaten.size} von 10 besiegt</span></div>
-          <p class="muted small">Besiege jeden Bot, um dich nach oben zu arbeiten.${nextBot >= 0 ? ` Nächstes Ziel: <b>${BOTS[nextBot].name}</b>.` : ' Alle besiegt – Respekt! 👑'}</p>
+          <p class="muted small">Besiege jeden Bot, um dich nach oben zu arbeiten.${nextBot >= 0 ? ` Nächstes Ziel: <b>${BOTS[nextBot].name}</b>.` : ' Alle besiegt – Respekt! <i class="ic i-crown"></i>'}</p>
           <div class="ladder">${BOTS.filter(b => b.ladder).map((b, i) => `<div class="rung ${beaten.has(i) ? 'done' : i > nextBot && nextBot >= 0 ? 'locked' : ''}" data-act="bot" data-arg="${i}">
-            <span class="em">${beaten.has(i) ? '✅' : b.emoji}</span><b>${b.name}</b><div class="muted">${b.elo}</div></div>`).join('')}</div></div>
+            <span class="em">${beaten.has(i) ? `<span class="mono done">${ico('check')}</span>` : botAvatar(b)}</span><b>${b.name}</b><div class="muted">${b.elo}</div></div>`).join('')}</div></div>
         <div class="card"><div class="label">Zugbewertungen</div><div style="height:10px"></div>
           <div class="legend">${CLS_ORDER.map(k => `<div><span class="cls-dot" style="background:${CLS[k].color}">${CLS[k].sym}</span>${CLS[k].name}</div>`).join('')}</div>
           <p class="muted small" style="margin-bottom:0">Die Bewertung siehst du live beim Spielen und in der Analyse.</p></div>
@@ -3147,17 +3170,22 @@ function gameItemHtml(g, i) {
   const res = g.result === '1/2-1/2' || uc == null ? 'draw' : ((g.result === '1-0') === (uc === 0) ? 'win' : 'loss');
   const resTxt = g.result === '1/2-1/2' ? 'Remis' : uc == null ? g.result : res === 'win' ? 'Sieg' : 'Niederl.';
   return `<div class="game-item" data-act="open" data-arg="${i}"><div class="res ${res}">${resTxt}</div>
-    <div class="info"><b>${esc(g.white)}</b> – <b>${esc(g.black)}</b><br><span class="muted">${new Date(g.date).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' })} · ${Math.ceil(g.moves.length / 2)} Züge · ${STATUS_TEXT[g.reason] || g.result}${g.acc != null ? ` · 🎯 ${g.acc}%` : ''}</span></div>
+    <div class="info"><b>${esc(g.white)}</b> – <b>${esc(g.black)}</b><br><span class="muted">${new Date(g.date).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' })} · ${Math.ceil(g.moves.length / 2)} Züge · ${STATUS_TEXT[g.reason] || g.result}${g.acc != null ? ` · <i class="ic i-target"></i> ${g.acc}%` : ''}</span></div>
     <button class="btn small" data-act="del" data-arg="${i}" title="Löschen">✕</button></div>`;
 }
 
 let mode = 'home';
 const modes = { home: Home, learn: Learn, openings: Openings, play: Play, puzzle: Puzzles, analysis: Analysis, free: Free, editor: Editor };
 const TAB_OF = { free: 'analysis', editor: 'analysis' };
+const TAB_TITLES = { home: ['house', 'Übersicht'], learn: ['graduation-cap', 'Lernen'], openings: ['book-open', 'Eröffnungen'], play: ['swords', 'Spielen'],
+  puzzle: ['puzzle', 'Rätsel'], analysis: ['chart-line', 'Analyse'], free: ['search', 'Analysebrett'], editor: ['pencil', 'Stellung aufbauen'] };
 function switchTab(name) {
   mode = name;
+  const tt = TAB_TITLES[name];
+  if (tt) $('mtopTitle').innerHTML = ico(tt[0]) + `<span>${tt[1]}</span>`;
   if (name !== 'learn') { document.body.classList.remove('learn-mode', 'lesson-mode', 'no-board'); }
   if (name !== 'openings') document.body.classList.remove('openings-mode');
+  if (name !== 'play') document.body.classList.remove('play-setup');
   document.body.classList.toggle('home-mode', name === 'home');
   document.querySelectorAll('.tabs button[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === (TAB_OF[name] || name)));
   for (const k of ['play', 'puzzle', 'analysis', 'openings', 'free', 'editor']) $('panel-' + k).classList.toggle('hidden', k !== name);
@@ -3192,9 +3220,14 @@ EvalBar.init();
 resize();
 window.addEventListener('resize', resize);
 document.querySelectorAll('.tabs button[data-tab]').forEach(b => b.onclick = () => switchTab(b.dataset.tab));
-const soundLabel = () => { $('soundBtn').innerHTML = Sound.on ? '🔊<span class="lbl"> Ton an</span>' : '🔇<span class="lbl"> Ton aus</span>'; };
+const soundLabel = () => {
+  $('soundBtn').innerHTML = ico(Sound.on ? 'volume-2' : 'volume-x') + `<span class="lbl"> Ton ${Sound.on ? 'an' : 'aus'}</span>`;
+  $('mSound').innerHTML = ico(Sound.on ? 'volume-2' : 'volume-x');
+};
 soundLabel();
 $('piecesBtn').onclick = () => openPieceChooser();
+$('mPieces').onclick = () => openPieceChooser();
+$('mSound').onclick = () => { Sound.on = !Sound.on; store.set('sound', Sound.on); soundLabel(); };
 $('soundBtn').onclick = () => { Sound.on = !Sound.on; store.set('sound', Sound.on); soundLabel(); };
 document.addEventListener('click', e => { if (e.target.closest('button, .game-item, .rung')) Sound.play('ui'); }, true);
 document.addEventListener('keydown', e => {

@@ -14,7 +14,7 @@ Fortschritt (Rätsel-Wertung, Partien) wird auf dem jeweiligen Gerät gespeicher
 
 ## Funktionen
 - **Übersicht**: Statistiken, Tage-Serie, Bot-Leiter, letzte Partien
-- **Lernen**: Lernpfad mit 12 Kapiteln und 39 Lektionen, Wiederholungen, Übungs-Mix, Springen.
+- **Lernen**: Lernpfad mit 12 Kapiteln und 36 Lektionen, Wiederholungen, Übungs-Mix, Springen.
   Einstufungspartie gegen einen adaptiven Bot. **Endspiel-Trainer** mit 7 Techniken gegen die Engine
   (Dame, Turm, zwei Türme, Bauernendspiele, Remis halten, Lucena)
 - **Eröffnungen**: 15 Eröffnungen mit 34 Linien nach Elo-Bereich, ansehen und üben mit Wiederholungen
@@ -24,7 +24,7 @@ Fortschritt (Rätsel-Wertung, Partien) wird auf dem jeweiligen Gerät gespeicher
   **Fehler-Training** mit Fehlern und Patzern aus deinen eigenen Partien
 - **Analyse**: Genauigkeit, Elo-Schätzung, Graph, PGN-Import. „Ab hier spielen“,
   **Analysebrett** mit den 3 besten Engine-Zügen, **Stellungs-Editor**
-- **Figuren**: 10 Figurensätze zur Auswahl (🎨)
+- **Figuren**: 10 Figurensätze zur Auswahl
 
 ## Prüf-Skripte (Node.js)
 ```
@@ -36,6 +36,7 @@ node tools/check-endgames.js   # prüft die Endspiel-Trainer-Stellungen
 ## Lizenzen
 Die Figurensätze stammen aus dem lichess.org-Projekt und stehen unter freien Lizenzen
 (GPLv2+, MIT, Apache 2.0, CC BY 4.0, CC0). Details stehen in `pieces/LIZENZEN.md`.
+Die Icons sind von [Lucide](https://lucide.dev) (ISC-Lizenz, siehe `ICONS-LIZENZ.txt`).
 
 ## App aktualisieren
 Nach Änderungen in `sw.js` die `VERSION` erhöhen und danach:

@@ -15,10 +15,10 @@ function parseOpeningLine(str) {
 }
 
 const OPENING_GROUPS = [
-  { id: 'g1', name: 'Einsteiger', range: 'bis ca. 1000 Elo', min: 0, max: 1000, icon: '🌱', why: 'Natürliche Entwicklung, klare Ziele, wenig Theorie. Hier zählt: Figuren raus, König sicher, Fallen kennen.' },
-  { id: 'g2', name: 'Aufsteiger', range: 'ca. 1000–1400 Elo', min: 1000, max: 1400, icon: '🌿', why: 'Solide Klassiker mit langfristigen Plänen. Du lernst Bauernstrukturen und typische Manöver kennen.' },
-  { id: 'g3', name: 'Fortgeschritten', range: 'ca. 1400–1800 Elo', min: 1400, max: 1800, icon: '🌳', why: 'Unausgeglichene, dynamische Stellungen mit Gewinnchancen – brauchen mehr Theorie und taktisches Gespür.' },
-  { id: 'g4', name: 'Experte', range: 'ab ca. 1800 Elo', min: 1800, max: 9999, icon: '🏔️', why: 'Hochtheoretische Systeme der Weltspitze. Lohnen sich, wenn die Grundlagen sitzen.' }
+  { id: 'g1', name: 'Einsteiger', range: 'bis ca. 1000 Elo', min: 0, max: 1000, icon: 'sprout', why: 'Natürliche Entwicklung, klare Ziele, wenig Theorie. Hier zählt: Figuren raus, König sicher, Fallen kennen.' },
+  { id: 'g2', name: 'Aufsteiger', range: 'ca. 1000–1400 Elo', min: 1000, max: 1400, icon: 'leaf', why: 'Solide Klassiker mit langfristigen Plänen. Du lernst Bauernstrukturen und typische Manöver kennen.' },
+  { id: 'g3', name: 'Fortgeschritten', range: 'ca. 1400–1800 Elo', min: 1400, max: 1800, icon: 'tree-pine', why: 'Unausgeglichene, dynamische Stellungen mit Gewinnchancen – brauchen mehr Theorie und taktisches Gespür.' },
+  { id: 'g4', name: 'Experte', range: 'ab ca. 1800 Elo', min: 1800, max: 9999, icon: 'mountain-snow', why: 'Hochtheoretische Systeme der Weltspitze. Lohnen sich, wenn die Grundlagen sitzen.' }
 ];
 
 const OPENINGS = [
