@@ -189,7 +189,7 @@ const LESSONS = [
           { t: 'info', pos: 'Ra8 Kg1 kg8 pf7 pg7 ph7', side: 'b', arrows: [['a8', 'g8']], text: '**Schachmatt**: Der König steht im Schach und kann sich auf keine Weise retten. Damit ist die Partie **gewonnen**!' },
           { t: 'quiz', pos: 'Ra8 Kg1 kg8 pf7 pg7 ph6', side: 'b', q: 'Schwarz steht im Schach. Ist das Matt?', opts: ['Ja, Matt', 'Nein, kein Matt'], a: 1, why: 'Der König kann nach h7 flüchten – dort ist ein Fluchtfeld frei.' },
           { t: 'mate', pos: 'Kg1 Ra1 Pf2 Pg2 Ph2 kg8 pf7 pg7 ph7', text: 'Setze Matt in einem Zug!' },
-          { t: 'mate', pos: 'Kg6 Qa1 kh8', text: 'Dame und König arbeiten zusammen: Setze Matt!' },
+          { t: 'mate', pos: 'Kg6 Qe1 kh8', text: 'Dame und König arbeiten zusammen: Setze Matt!' },
           { t: 'mate', pos: 'Kb6 Qc5 ka8', text: 'Noch ein Matt mit der Dame!' }
         ]
       },
@@ -295,8 +295,8 @@ const LESSONS = [
       {
         id: 'damenmatt', title: 'Damenmatt', icon: '♕', steps: [
           { t: 'info', text: 'Mit **Dame und König** gewinnst du immer:\n1. Drücke den König mit der Dame **an den Rand**\n2. Hol deinen **König heran**\n3. Setze Matt – und **pass auf, kein Patt** zu machen!' },
-          { t: 'mate', pos: 'Kb6 Qh1 ka8', text: 'Die Vorbereitung ist geschafft. Setze Matt!' },
-          { t: 'playmate', fen: '8/8/8/4k3/8/8/8/Q3K3 w - - 0 1', max: 25, text: 'Jetzt im echten Spiel gegen den Computer: **Setze Matt** in höchstens 25 Zügen!' }
+          { t: 'mate', pos: 'Kb6 Qh2 ka8', text: 'Die Vorbereitung ist geschafft. Setze Matt!' },
+          { t: 'playmate', fen: '8/8/8/4k3/8/8/8/3QK3 w - - 0 1', max: 25, text: 'Jetzt im echten Spiel gegen den Computer: **Setze Matt** in höchstens 25 Zügen!' }
         ]
       },
       {
@@ -342,7 +342,7 @@ const LESSONS = [
       {
         id: 'damenmuster', title: 'Dame + Helfer', icon: '💋', steps: [
           { t: 'info', text: 'Die Dame setzt oft Matt, wenn eine **andere Figur sie deckt** – der König kann sie dann nicht schlagen. Das nennt man auch den „Kuss des Todes“.' },
-          { t: 'mate', pos: 'Kg1 Qg3 Pf6 Pg2 Ph2 kg8 rf8 ph7 pa7', text: 'Der Bauer f6 hilft der Dame. Setze Matt!' },
+          { t: 'mate', pos: 'Kg1 Qh6 Pf6 Pg2 Ph2 kg8 rf8 ph7 pa7', text: 'Der Bauer f6 hilft der Dame. Setze Matt!' },
           { t: 'mate', pos: 'Kg1 Qh5 Bd3 Pg2 Ph2 kg8 rf8 pf7 pg7', text: 'Dame und Läufer zielen auf h7. Setze Matt!' }
         ]
       },
@@ -396,4 +396,30 @@ const LESSONS = [
   }
 ];
 
-if (typeof module !== 'undefined' && module.exports) module.exports = { LESSONS, lessonFen };
+// Endspiel-Trainer: Technik-Übungen gegen die Engine
+//   playmate – Matt setzen, promote – Bauern umwandeln, hold – Remis halten (user = Farbe des Lernenden)
+const ENDGAMES = [
+  { id: 'eg-dame', title: 'Dame gegen König', icon: '♕', level: 'Leicht',
+    info: 'Dränge den König mit der Dame zurück (Springer-Abstand halten!), hol deinen König heran und setze am Rand Matt. **Vorsicht vor Patt.**',
+    step: { t: 'playmate', fen: '8/8/8/4k3/8/8/8/3QK3 w - - 0 1', max: 25, text: 'Setze Matt in höchstens 25 Zügen!' } },
+  { id: 'eg-zweitürme', title: 'Zwei Türme (Treppe)', icon: '🪜', level: 'Leicht',
+    info: 'Die Türme wechseln sich ab: Einer sperrt eine Reihe, der andere gibt Schach. Halte die Türme weit weg vom König, damit er sie nicht angreifen kann.',
+    step: { t: 'playmate', fen: '8/8/8/3k4/8/8/8/R3K2R w - - 0 1', max: 15, text: 'Setze mit den Türmen Matt in höchstens 15 Zügen!' } },
+  { id: 'eg-turm', title: 'Turm gegen König', icon: '♖', level: 'Mittel',
+    info: 'Der Turm schneidet den König ab, dein König geht in **Opposition**. Dann Schach geben – Reihe für Reihe, bis der König am Rand steht.',
+    step: { t: 'playmate', fen: '8/8/8/4k3/8/8/8/R3K3 w - - 0 1', max: 35, text: 'Setze Matt in höchstens 35 Zügen!' } },
+  { id: 'eg-bauer1', title: 'Bauer mit König davor', icon: '♙', level: 'Leicht',
+    info: 'Steht dein König **vor** dem Bauern, gewinnst du: Erst Platz schaffen, dann den Bauern nachziehen. Achte darauf, nicht Patt zu setzen.',
+    step: { t: 'promote', fen: '4k3/8/4K3/4P3/8/8/8/8 w - - 0 1', max: 15, text: 'Bring den Bauern zur Dame!' } },
+  { id: 'eg-bauer2', title: 'Bauer: König zwei Felder vorn', icon: '👑', level: 'Mittel',
+    info: 'Ist dein König zwei Reihen vor dem Bauern, gewinnst du immer – egal wer am Zug ist. Halte die **Opposition** und lass dich nicht verdrängen.',
+    step: { t: 'promote', fen: '8/8/4k3/8/4K3/8/4P3/8 w - - 0 1', max: 25, text: 'Bring den Bauern zur Dame!' } },
+  { id: 'eg-halten', title: 'Remis halten', icon: '🛡️', level: 'Mittel',
+    info: 'Du verteidigst mit Schwarz. Bleib mit dem König **vor** dem Bauern und halte die **Opposition**: Zieht der weiße König, stell dich ihm direkt gegenüber.',
+    step: { t: 'hold', fen: '8/4k3/8/4K3/4P3/8/8/8 w - - 0 1', user: 'b', max: 15, text: 'Halte 15 Züge lang das Remis – lass den Bauern nicht durch!' } },
+  { id: 'eg-lucena', title: 'Lucena-Stellung', icon: '🌉', level: 'Schwer',
+    info: 'Die wichtigste Turmendspiel-Technik: Bau mit deinem Turm eine **Brücke** (z. B. Turm auf die 4. Reihe), damit dein König aus den Schachs entkommt und der Bauer durchläuft.',
+    step: { t: 'promote', fen: '1K1k4/1P6/8/8/8/8/r7/2R5 w - - 0 1', max: 30, text: 'Bring den Bauern durch – baue die Brücke!' } }
+];
+
+if (typeof module !== 'undefined' && module.exports) module.exports = { LESSONS, lessonFen, ENDGAMES };

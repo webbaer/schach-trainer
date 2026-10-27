@@ -554,7 +554,7 @@ body.openings-mode .board-area, body.openings-mode .panel { display: none; }
 .board-nav .nav-info b { overflow: hidden; text-overflow: ellipsis; }
 .board-nav .pill { flex: none; }
 @media (max-width: 980px) {
-  html, body { overflow-x: hidden; }
+  body { overflow-x: hidden; }
   .board-nav .pill { display: none; }
 }
 
@@ -569,3 +569,63 @@ body.openings-mode .board-area, body.openings-mode .panel { display: none; }
 .modal { grid-template-columns: minmax(0, 1fr); justify-items: center; }
 .modal-box { width: min(360px, 100%); }
 .modal-box:has(.pc-grid) { width: min(460px, 100%); }
+
+/* ---------- Schachuhr ---------- */
+.player-strip .clock {
+  margin-left: auto; font: 700 18px/1 ui-monospace, Menlo, monospace; background: var(--bg3); color: var(--muted);
+  border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; min-width: 74px; text-align: right; flex: none;
+}
+.player-strip .clock.run { background: #f6e9ea; color: #1b0d10; border-color: #fff; }
+.player-strip .clock.low.run { background: var(--danger); color: #fff; animation: pulse 1s infinite; }
+.tc-seg { flex-wrap: wrap; }
+.tc-seg button { flex: 1 0 30%; font-size: 13px; }
+
+/* ---------- Rätsel: Themen und Rush ---------- */
+.theme-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip-btn { background: var(--bg3); border: 1px solid var(--line); border-radius: 99px; padding: 6px 12px; font-size: 13px; font-weight: 650; color: var(--muted); }
+.chip-btn.active { background: var(--accent); border-color: transparent; color: #fff; }
+.chip-btn b { background: var(--accent2); color: #2a0b12; border-radius: 99px; padding: 0 6px; margin-left: 4px; }
+.rush-modes { display: grid; gap: 8px; margin-top: 8px; }
+.rush-card { display: grid; grid-template-columns: 48px 1fr; grid-template-rows: auto auto; align-items: center; text-align: left; gap: 0 10px;
+  background: linear-gradient(135deg, var(--bg3), var(--bg2)); border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
+.rush-card:hover { border-color: var(--accent); }
+.rush-card span { grid-row: span 2; font-size: 30px; text-align: center; }
+.rush-card b { font-size: 17px; }
+.rush-card small { color: var(--muted); }
+.rush-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
+.rush-time { font: 800 34px/1 ui-monospace, Menlo, monospace; background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; }
+.rush-time.low { color: var(--danger); animation: pulse 1s infinite; }
+.rush-time.inf { color: var(--muted); }
+.rush-lives span { font-size: 22px; color: var(--ok); margin-left: 4px; }
+.rush-lives span.x { color: var(--danger); }
+.rush-log { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0; justify-content: center; }
+.rush-log span { font-size: 12px; font-weight: 800; border-radius: 6px; padding: 3px 6px; }
+.rush-log .ok { background: rgba(124, 196, 127, .2); color: var(--ok); }
+.rush-log .bad { background: rgba(255, 90, 90, .15); color: var(--danger); }
+
+/* ---------- Endspiel-Trainer ---------- */
+.eg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+.eg-card { display: flex; gap: 14px; align-items: center; text-align: left; background: var(--bg2); border: 1px solid var(--line); border-bottom-width: 4px; border-radius: 16px; padding: 14px; }
+.eg-card:hover { border-color: var(--accent); }
+.eg-card.done { border-color: rgba(124, 196, 127, .55); }
+.eg-card .eg-ic { font-size: 30px; width: 54px; height: 54px; border-radius: 14px; background: var(--bg3); display: grid; place-items: center; flex: none; }
+.eg-card b { font-size: 16px; }
+.eg-best { color: var(--ok); font-size: 13px; font-weight: 700; margin-top: 2px; }
+
+/* ---------- Analysebrett & Editor ---------- */
+.eng-lines { display: flex; flex-direction: column; gap: 5px; margin: 8px 0; }
+.eng-line { display: flex; gap: 8px; align-items: baseline; text-align: left; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; font-size: 13px; }
+.eng-line:hover { border-color: var(--accent); }
+.eng-ev { font-weight: 800; min-width: 48px; text-align: center; border-radius: 6px; padding: 2px 6px; flex: none; }
+.eng-ev.w { background: #f3e6e6; color: #1b0d10; }
+.eng-ev.b { background: #120a0b; color: #f3e6e6; border: 1px solid var(--line); }
+.eng-pv { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.palette { display: grid; grid-template-columns: repeat(6, 1fr); gap: 5px; }
+.pal { aspect-ratio: 1; background: var(--light); border: 2px solid transparent; border-radius: 8px; display: grid; place-items: center; padding: 3px; }
+.pal:nth-child(n+7) { background: var(--dark); }
+.pal.active { border-color: #ffd34d; box-shadow: 0 0 0 2px #ffd34d; }
+.pal .piece-img { width: 100%; height: 100%; }
+.pal .piece { font-size: 28px; }
+.pal.eraser { grid-column: span 6; aspect-ratio: auto; background: var(--bg3); font-size: 18px; padding: 6px; }
+.castle-row { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 10px; }
+#learn, #openings, #home { overflow-x: clip; }

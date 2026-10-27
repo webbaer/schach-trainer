@@ -106,14 +106,44 @@ function engineHandler(C, eng, msg) {
   for (const u of msg.moves || []) { const m = pos.fromUci(u); if (!m) break; pos.make(m); }
   const pvUci = pv => { const p = pos.clone(), out = []; for (const m of pv) { out.push(p.toUci(m)); p.make(m); } return out; };
   if (msg.cmd === 'search') {
-    const r = eng.search(pos, { timeMs: msg.timeMs || 1000, maxDepth: msg.maxDepth });
+    const exclude = (msg.exclude || []).map(u => pos.fromUci(u)).filter(Boolean);
+    const r = eng.search(pos, { timeMs: msg.timeMs || 1000, maxDepth: msg.maxDepth, exclude: exclude.length ? exclude : null });
     return { move: r.move ? pos.toUci(r.move) : null, score: r.score, depth: r.depth, pv: pvUci(r.pv) };
   }
   if (msg.cmd === 'bot') {
     const L = msg.level;
-    if (L.time) { const r = eng.search(pos, { timeMs: L.time }); return { move: r.move ? pos.toUci(r.move) : null }; }
-    const sc = eng.rootScores(pos, L.depth, 2500);
+    if (L.time && !L.style) { const r = eng.search(pos, { timeMs: L.time }); return { move: r.move ? pos.toUci(r.move) : null }; }
+    const sc = eng.rootScores(pos, L.depth, L.maxMs || 2500);
     if (!sc.length) return { move: null };
+    // Persönlichkeit: Bonus für Züge, die zum Spielstil passen
+    if (L.style) {
+      const us = pos.side, ek = pos.kingSq[us ^ 1], ok = pos.kingSq[us];
+      const V = [0, 1, 3, 3, 5, 9, 0];
+      for (const x of sc) {
+        if (Math.abs(x.score) > 5000) continue;
+        const m = x.move, to = C.mTo(m), from = C.mFrom(m), fl = C.mFlags(m);
+        const mover = pos.board[from] & 7, victim = pos.board[to] & 7;
+        pos.make(m);
+        const check = pos.inCheck();
+        pos.unmake();
+        const dist = (a, b) => Math.max(Math.abs((a >> 4) - (b >> 4)), Math.abs((a & 7) - (b & 7)));
+        let bonus = 0;
+        if (L.style === 'attack') {
+          if (check) bonus += 35;
+          if (fl & C.F_CAP) bonus += 15;
+          if (mover !== 6 && mover !== 1) bonus += (7 - dist(to, ek)) * 5;
+          if (mover === 1 && dist(to, ek) <= 3) bonus += 15;
+        } else if (L.style === 'trade') {
+          if ((fl & C.F_CAP) && victim && V[victim] >= V[mover] - 1) bonus += 30 + (victim === 5 ? 30 : 0);
+        } else if (L.style === 'defend') {
+          if (fl & C.F_CASTLE) bonus += 50;
+          if (mover !== 6 && dist(to, ok) <= 2) bonus += 12;
+          if (mover === 1 && dist(from, ok) <= 1) bonus -= 30;
+          if (check) bonus -= 10;
+        }
+        x.score += bonus;
+      }
+    }
     let pick = sc[0];
     if (Math.random() < (L.blunder || 0)) pick = sc[Math.floor(Math.random() * sc.length)];
     else {
@@ -170,6 +200,7 @@ class EngineClient {
 }
 const engine = new EngineClient();       // Bot, Hinweise, Rätsel
 const analysisEngine = new EngineClient(); // Partieanalyse
+let freeEngine = null;                       // Analysebrett (eigener Prozess, wird bei neuer Stellung abgebrochen)
 
 // ---------- Partie ----------
 class Game {
@@ -232,7 +263,7 @@ function parsePgn(text) {
 }
 
 const STATUS_TEXT = {
-  placement: 'Einstufung beendet',
+  placement: 'Einstufung beendet', timeout: 'Zeit abgelaufen',
   checkmate: 'Schachmatt', stalemate: 'Patt', insufficient: 'Ungenügendes Material',
   fifty: '50-Züge-Regel', repetition: 'Dreifache Stellungswiederholung', resign: 'Aufgabe'
 };
@@ -389,6 +420,7 @@ class Board {
     if (e.button !== 0 || this.promoOpen) return;
     const sq = this.sqFromPoint(e.clientX, e.clientY);
     if (sq < 0) return;
+    if (this.editHandler) { this.editHandler(sq); e.preventDefault(); return; }
     if (this.sel >= 0 && this.sel !== sq && this.targets().some(m => C.mTo(m) === sq)) { this.tryMove(this.sel, sq); return; }
     const p = this.pos.board[sq];
     if (this.movable >= 0 && p && (p >> 3) === this.movable && this.pos.side === this.movable) {
@@ -514,7 +546,8 @@ function setStrip(where, info) {
   if (!info) { el.innerHTML = ''; return; }
   el.innerHTML = `<div class="avatar">${info.avatar || '🙂'}</div><div>${esc(info.name)} ${info.sub ? `<span class="sub">${esc(info.sub)}</span>` : ''}</div>` +
     (info.pos ? `<div class="captured">${capturedInfo(info.pos, info.color)}</div>` : '') +
-    (info.thinking ? '<div class="thinking">denkt nach …</div>' : '');
+    (info.thinking ? '<div class="thinking">denkt nach …</div>' : '') +
+    (info.clock ? `<div class="clock" data-color="${info.color}"></div>` : '');
 }
 
 // Genauigkeit (0–100) grob in Elo umrechnen
@@ -539,29 +572,66 @@ const accFromLoss = loss => Math.max(0, Math.min(100, 103.1668 * Math.exp(-0.043
 
 // ---------- Bots ----------
 const BOTS = [
-  { name: 'Bruno', emoji: '🐣', elo: 400, depth: 1, noise: 400, blunder: 0.3, desc: 'Lernt gerade die Regeln' },
-  { name: 'Lina', emoji: '🐢', elo: 600, depth: 1, noise: 250, blunder: 0.15, desc: 'Übersieht oft Figuren' },
-  { name: 'Max', emoji: '🦊', elo: 800, depth: 2, noise: 160, blunder: 0.08, desc: 'Gelegenheitsspieler' },
-  { name: 'Emma', emoji: '🐼', elo: 1000, depth: 2, noise: 90, blunder: 0.04, desc: 'Vereinsanfängerin' },
-  { name: 'Paul', emoji: '🦉', elo: 1200, depth: 3, noise: 55, blunder: 0.02, desc: 'Solider Hobbyspieler' },
-  { name: 'Sofia', emoji: '🐺', elo: 1400, depth: 3, noise: 25, blunder: 0, desc: 'Kennt die Taktiken' },
-  { name: 'Viktor', emoji: '🦁', elo: 1600, depth: 4, noise: 12, blunder: 0, desc: 'Starker Vereinsspieler' },
-  { name: 'Greta', emoji: '🐉', elo: 1800, time: 400, desc: 'Experte' },
-  { name: 'Kaspar', emoji: '🤖', elo: 2000, time: 1200, desc: 'Meisteranwärter' },
-  { name: 'Titan', emoji: '👑', elo: 2300, time: 3000, desc: 'Volle Engine-Stärke' },
-  { name: 'Freund', emoji: '👥', elo: 0, human: true, desc: 'Zwei Spieler an einem Gerät' }
+  { name: 'Bruno', ladder: true, emoji: '🐣', elo: 400, depth: 1, noise: 400, blunder: 0.3, desc: 'Lernt gerade die Regeln' },
+  { name: 'Lina', ladder: true, emoji: '🐢', elo: 600, depth: 1, noise: 250, blunder: 0.15, desc: 'Übersieht oft Figuren' },
+  { name: 'Max', ladder: true, emoji: '🦊', elo: 800, depth: 2, noise: 160, blunder: 0.08, desc: 'Gelegenheitsspieler' },
+  { name: 'Emma', ladder: true, emoji: '🐼', elo: 1000, depth: 2, noise: 90, blunder: 0.04, desc: 'Vereinsanfängerin' },
+  { name: 'Paul', ladder: true, emoji: '🦉', elo: 1200, depth: 3, noise: 55, blunder: 0.02, desc: 'Solider Hobbyspieler' },
+  { name: 'Sofia', ladder: true, emoji: '🐺', elo: 1400, depth: 3, noise: 25, blunder: 0, desc: 'Kennt die Taktiken' },
+  { name: 'Viktor', ladder: true, emoji: '🦁', elo: 1600, depth: 4, noise: 12, blunder: 0, desc: 'Starker Vereinsspieler' },
+  { name: 'Greta', ladder: true, emoji: '🐉', elo: 1800, time: 400, desc: 'Experte' },
+  { name: 'Kaspar', ladder: true, emoji: '🤖', elo: 2000, time: 1200, desc: 'Meisteranwärter' },
+  { name: 'Titan', ladder: true, emoji: '👑', elo: 2300, time: 3000, desc: 'Volle Engine-Stärke' },
+  { name: 'Freund', emoji: '👥', elo: 0, human: true, desc: 'Zwei Spieler an einem Gerät' },
+  // Persönlichkeiten: eigener Spielstil + Lieblingseröffnungen
+  { name: 'Attila', emoji: '🗡️', elo: 1300, depth: 3, noise: 25, blunder: 0.01, persona: true, style: 'attack', book: { w: ['italienisch'], b: ['sizilianisch'] }, desc: 'Greift immer an: Schach, Opfer, Königsangriff. Spielt Italienisch und Sizilianisch.' },
+  { name: 'Dagmar', emoji: '♛', elo: 1400, depth: 3, noise: 20, persona: true, style: 'solid', book: { w: ['damengambit'], b: ['slawisch', 'carokann'] }, desc: 'Spielt immer Damengambit – als Schwarz Slawisch oder Caro-Kann. Solide und positionell.' },
+  { name: 'Erik', emoji: '🧮', elo: 1500, depth: 3, noise: 15, persona: true, style: 'trade', book: { w: ['spanisch'], b: ['e5schwarz', 'franzoesisch'] }, desc: 'Tauscht so oft wie möglich ab und will ins Endspiel.' },
+  { name: 'Fritz', emoji: '🛡️', elo: 1150, depth: 3, noise: 30, blunder: 0.02, persona: true, style: 'defend', book: { w: ['london'], b: ['carokann', 'franzoesisch'] }, desc: 'Mauert, rochiert früh und wartet auf deine Fehler. Spielt das London-System.' },
+  { name: 'Gina', emoji: '🎲', elo: 900, depth: 2, noise: 60, blunder: 0.05, persona: true, style: 'attack', book: { w: ['italienisch', 'e5schwarz'], b: ['skandinavisch'] }, desc: 'Wild und riskant – liebt Fallen und schnelle Angriffe.' }
 ];
+const LADDER = BOTS.map((b, i) => b.ladder ? i : -1).filter(i => i >= 0);
+
+// Eröffnungsbuch eines Bots: nächster Zug aus seinen Lieblingslinien, solange die Partie dazu passt
+function bookMove(bot, game, side) {
+  if (!bot.book || game.startFen !== C.START_FEN) return null;
+  // eigene Farbe zuerst, dann die Linien der anderen Farbe (gleiche Hauptzüge)
+  const ids = [...(bot.book[side === 0 ? 'w' : 'b'] || []), ...(bot.book[side === 0 ? 'b' : 'w'] || [])];
+  const hist = game.uci(), cands = [];
+  for (const id of ids) {
+    const o = OPENINGS.find(x => x.id === id);
+    if (!o) continue;
+    for (const l of o.lines) {
+      const mv = Openings.prepLine(l).map(x => x.uci);
+      if (mv.length > hist.length && hist.every((u, i) => mv[i] === u)) cands.push(mv[hist.length]);
+    }
+  }
+  return cands.length ? cands[Math.floor(Math.random() * cands.length)] : null;
+}
+
+// ---------- Bedenkzeit ----------
+const TIME_CONTROLS = [
+  { id: 'none', name: 'Ohne Uhr' }, { id: '1+0', name: 'Bullet 1+0', base: 60, inc: 0 }, { id: '3+2', name: 'Blitz 3+2', base: 180, inc: 2 },
+  { id: '5+0', name: 'Blitz 5+0', base: 300, inc: 0 }, { id: '10+0', name: 'Rapid 10+0', base: 600, inc: 0 }, { id: '15+10', name: 'Rapid 15+10', base: 900, inc: 10 }
+];
+const fmtClock = ms => {
+  ms = Math.max(0, ms);
+  if (ms < 10000) return (ms / 1000).toFixed(1);
+  const t = Math.ceil(ms / 1000);
+  return Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0');
+};
 
 // ---------- Modus: Spielen ----------
 const Play = {
-  game: null, botIdx: store.get('botIdx', 3), colorChoice: store.get('colorChoice', 'w'), userColor: 0,
+  game: null, botIdx: store.get('botIdx', 3), tc: store.get('timeControl', 'none'), clock: null, colorChoice: store.get('colorChoice', 'w'), userColor: 0,
   thinking: false, over: null, token: 0, viewPly: null, showEval: store.get('showEval', false), hint: null, saved: false,
   botDelay: store.get('botDelay', 1300), showLive: store.get('liveCls', true), live: { evals: [], best: [], cls: [] }, liveToken: 0, liveLoop: null,
 
   init() {
     const cur = store.get('current', null);
     if (cur && cur.moves) {
-      this.botIdx = cur.botIdx; this.userColor = cur.userColor; this.placement = cur.placement || null;
+      this.botIdx = cur.botIdx; this.userColor = cur.userColor; this.placement = cur.placement || null; this.clock = cur.clock || null;
+      if (this.clock) this.clock.last = Date.now();
       this.game = Game.fromUci(cur.startFen, cur.moves);
     }
   },
@@ -570,11 +640,59 @@ const Play = {
     // Adaptiver Bot: übernimmt die Einstellungen des Bots, dessen Elo der aktuellen Schätzung am nächsten liegt
     const elo = this.placement.est;
     let near = BOTS[0];
-    for (const b of BOTS) if (!b.human && Math.abs(b.elo - elo) < Math.abs(near.elo - elo)) near = b;
+    for (const b of BOTS) if (b.ladder && Math.abs(b.elo - elo) < Math.abs(near.elo - elo)) near = b;
     return Object.assign({}, near, { name: 'Adaptiver Bot', emoji: '🎯', elo: Math.round(elo / 10) * 10, desc: 'Passt sich deiner Stärke an' });
   },
 
   // ----- Einstufungspartie -----
+  // Partie ab einer beliebigen Stellung (aus Analyse, Analysebrett oder Editor)
+  startFrom(fen, userColor) {
+    this.placement = null;
+    this.setup = false;
+    switchTab('play');
+    this.start(fen, userColor);
+  },
+
+  // ----- Schachuhr -----
+  clockTick() {
+    const k = this.clock;
+    if (!k || !k.started || this.over || !this.game || mode !== 'play' || document.hidden) { if (k) k.last = Date.now(); return; }
+    const now = Date.now(), side = this.game.pos.side;
+    k.t[side] -= now - (k.last || now);
+    k.last = now;
+    if (k.t[side] <= 0) {
+      k.t[side] = 0;
+      // Zeit abgelaufen: Gewinn für den Gegner – außer er hat nur noch den König
+      let mat = false;
+      for (let sq = 0; sq < 128; sq++) { if (sq & 0x88) { sq += 7; continue; } const p = this.game.pos.board[sq]; if (p && (p >> 3) === (side ^ 1) && (p & 7) !== 6) mat = true; }
+      if (mat) this.finish('timeout', side ^ 1); else this.finish('insufficient');
+      return;
+    }
+    this.renderClocks();
+  },
+  clockMoved(rec) {
+    const k = this.clock;
+    if (!k) return;
+    if (k.started) k.t[rec.side] += k.inc;
+    if (this.game.moves.length >= 2) k.started = true;
+    k.last = Date.now();
+  },
+  renderClocks() {
+    if (!this.clock) return;
+    document.querySelectorAll('.clock[data-color]').forEach(el => {
+      const c = +el.dataset.color, ms = this.clock.t[c];
+      el.textContent = fmtClock(ms);
+      el.classList.toggle('run', this.clock.started && !this.over && this.game.pos.side === c);
+      el.classList.toggle('low', ms < 20000);
+    });
+  },
+  botThinkMs() {
+    const k = this.clock;
+    if (!k) return null;
+    const left = k.t[this.userColor ^ 1];
+    return Math.max(80, Math.min(3000, left / 35 + k.inc * 0.7));
+  },
+
   startPlacement() {
     this.placement = { est: 1000, cpl: {}, count: 0 };
     const prev = this.colorChoice;
@@ -647,7 +765,7 @@ const Play = {
     Learn.markUnitsDone(units);
     if (!Puzzles.st.tries) { Puzzles.st.rating = elo; Puzzles.st.peak = elo; Puzzles.st.hist = [elo]; Puzzles.save(); }
     let bi = 0;
-    BOTS.forEach((b, i) => { if (!b.human && b.elo <= elo) bi = i; });
+    BOTS.forEach((b, i) => { if (b.ladder && b.elo <= elo) bi = i; });
     this.placement = null;
     this.botIdx = bi; store.set('botIdx', bi);
     this.persist();
@@ -684,14 +802,16 @@ const Play = {
     if (this.game && !this.over) { this.maybeBot(); this.liveAnalyse(); }
   },
 
-  start() {
+  start(fen, forcedColor) {
     engine.cancel();
     this.token++;
-    this.game = new Game();
+    this.game = new Game(fen || C.START_FEN);
     this.over = null; this.viewPly = null; this.hint = null; this.thinking = false; this.saved = false;
     this.resetLive();
     const c = this.colorChoice === 'r' ? (Math.random() < .5 ? 'w' : 'b') : this.colorChoice;
-    this.userColor = c === 'w' ? 0 : 1;
+    this.userColor = forcedColor != null ? forcedColor : c === 'w' ? 0 : 1;
+    const tc = TIME_CONTROLS.find(t => t.id === this.tc);
+    this.clock = !this.placement && tc && tc.base ? { t: [tc.base * 1000, tc.base * 1000], inc: tc.inc * 1000, started: false, last: 0, name: tc.name } : null;
     board.setFlipped(this.userColor === 1 && !this.bot.human);
     this.persist();
     this.refresh(); this.renderPanel();
@@ -701,7 +821,7 @@ const Play = {
 
   persist() {
     if (!this.game || this.over) { store.set('current', null); return; }
-    store.set('current', { botIdx: this.botIdx, userColor: this.userColor, startFen: this.game.startFen, moves: this.game.uci(), placement: this.placement });
+    store.set('current', { botIdx: this.botIdx, userColor: this.userColor, startFen: this.game.startFen, moves: this.game.uci(), placement: this.placement, clock: this.clock });
   },
 
   isUserTurn() { return this.game && !this.over && (this.bot.human || this.game.pos.side === this.userColor); },
@@ -789,12 +909,13 @@ const Play = {
     });
     const me = this.bot.human ? 0 : this.userColor;
     if (this.bot.human) {
-      setStrip(board.flipped ? 'bottom' : 'top', { avatar: '♚', name: 'Schwarz', pos, color: 1 });
-      setStrip(board.flipped ? 'top' : 'bottom', { avatar: '♔', name: 'Weiß', pos, color: 0 });
+      setStrip(board.flipped ? 'bottom' : 'top', { avatar: '♚', name: 'Schwarz', pos, color: 1, clock: !!this.clock });
+      setStrip(board.flipped ? 'top' : 'bottom', { avatar: '♔', name: 'Weiß', pos, color: 0, clock: !!this.clock });
     } else {
-      setStrip('top', { avatar: this.bot.emoji, name: this.bot.name, sub: `(${this.bot.elo})`, pos, color: me ^ 1, thinking: this.thinking });
-      setStrip('bottom', { avatar: '🙂', name: 'Du', pos, color: me });
+      setStrip('top', { avatar: this.bot.emoji, name: this.bot.name, sub: `(${this.bot.elo})`, pos, color: me ^ 1, thinking: this.thinking, clock: !!this.clock });
+      setStrip('bottom', { avatar: '🙂', name: 'Du', pos, color: me, clock: !!this.clock });
     }
+    this.renderClocks();
     renderBoardNav();
     EvalBar.show(this.showEval);
     if (this.showEval) {
@@ -823,6 +944,8 @@ const Play = {
   },
 
   afterMove() {
+    const lastRec = this.game.moves[this.game.moves.length - 1];
+    if (lastRec) this.clockMoved(lastRec);
     this.persist();
     this.liveAnalyse();
     const st = this.game.pos.status();
@@ -839,9 +962,13 @@ const Play = {
     this.refresh();
     const t0 = Date.now();
     const b = this.bot;
-    const r = await engine.request({ cmd: 'bot', fen: this.game.startFen, moves: this.game.uci(), level: { depth: b.depth, noise: b.noise, blunder: b.blunder, time: b.time } });
-    // Bedenkzeit des Bots: mindestens die eingestellte Pause, leicht zufällig
-    const wait = this.botDelay * (0.8 + Math.random() * 0.4) - (Date.now() - t0);
+    const think = this.botThinkMs();
+    const book = bookMove(b, this.game, this.game.pos.side);
+    const r = book ? { move: book } : await engine.request({ cmd: 'bot', fen: this.game.startFen, moves: this.game.uci(),
+      level: { depth: b.depth, noise: b.noise, blunder: b.blunder, time: b.time && think ? Math.min(b.time, think) : b.time, style: b.style, maxMs: think || 2500 } });
+    // Bedenkzeit des Bots: mindestens die eingestellte Pause, leicht zufällig (mit Uhr kürzer)
+    const delay = think ? Math.min(this.botDelay, think) : this.botDelay;
+    const wait = delay * (0.8 + Math.random() * 0.4) - (Date.now() - t0);
     if (wait > 0) await sleep(wait);
     if (tok !== this.token) return;
     this.thinking = false;
@@ -855,7 +982,7 @@ const Play = {
   finish(reason, winner) {
     let result;
     if (reason === 'checkmate') result = this.game.pos.side === 0 ? '0-1' : '1-0';
-    else if (reason === 'resign') result = winner === 0 ? '1-0' : '0-1';
+    else if (reason === 'resign' || reason === 'timeout') result = winner === 0 ? '1-0' : '0-1';
     else result = '1/2-1/2';
     this.over = { result, reason };
     this.thinking = false;
@@ -866,16 +993,18 @@ const Play = {
     this.refresh(true);
     this.renderPanel();
     Sound.play('end');
+    const added = this.bot.human ? 0 : MyPuzzles.addFromGame({ startFen: this.game.startFen, moves: this.game.uci(), evals: this.live.evals, best: this.live.best, cls: this.live.cls, userColor: this.userColor, date: Date.now() });
     if (this.placement) { this.showPlacementResult(); return; }
     const userWon = !this.bot.human && ((result === '1-0' && this.userColor === 0) || (result === '0-1' && this.userColor === 1));
     const userLost = !this.bot.human && result !== '1/2-1/2' && !userWon;
     const title = this.bot.human ? (result === '1-0' ? 'Weiß gewinnt' : result === '0-1' ? 'Schwarz gewinnt' : 'Remis') :
       userWon ? '🏆 Gewonnen!' : userLost ? 'Verloren' : '🤝 Remis';
-    const sub = userWon ? `Du hast ${this.bot.name} besiegt! ${this.botIdx < 9 ? `Als Nächstes: ${BOTS[this.botIdx + 1].name} ${BOTS[this.botIdx + 1].emoji}` : ''}` : '';
+    const sub = userWon ? `Du hast ${this.bot.name} besiegt! ${this.bot.ladder && this.botIdx < 9 ? `Als Nächstes: ${BOTS[this.botIdx + 1].name} ${BOTS[this.botIdx + 1].emoji}` : ''}` : '';
     showModal(`<div style="font-size:54px">${this.bot.emoji}</div><h2>${title}</h2><p class="muted">${STATUS_TEXT[reason]} · ${result}</p>
       ${sub ? `<p>${sub}</p>` : ''}
+      ${added ? `<p class="small">⭐ ${added} ${added === 1 ? 'Fehler wurde' : 'Fehler wurden'} ins Fehler-Training übernommen.</p>` : ''}
       <button class="btn primary full" data-act="analyse">📈 Partie analysieren</button>
-      ${userWon && this.botIdx < 9 ? '<button class="btn full" data-act="nextBot">Nächsten Bot herausfordern</button>' : ''}
+      ${userWon && this.bot.ladder && this.botIdx < 9 ? '<button class="btn full" data-act="nextBot">Nächsten Bot herausfordern</button>' : ''}
       <button class="btn full" data-act="again">Revanche</button>
       <button class="btn full" data-act="close">Schließen</button>`, {
       analyse: () => { hideModal(); Analysis.loadRecord(this.lastRecord); switchTab('analysis'); },
@@ -961,11 +1090,15 @@ const Play = {
     if (!this.game || this.setup) {
       const beaten = beatenBots();
       p.innerHTML = `<div class="panel-head"><div class="big-ic">${this.bot.emoji}</div><div><h2>Neue Partie</h2><div class="muted">Wähle deinen Gegner</div></div></div>
-        <div class="bot-grid">${BOTS.map((b, i) => `<button class="bot-card ${i === this.botIdx ? 'active' : ''} ${beaten.has(i) ? 'has-beaten' : ''}" data-act="bot" data-arg="${i}">
-          <span class="em">${b.emoji}</span><span class="nm">${b.name}</span><span class="el">${b.human ? '2 Spieler' : 'ca. ' + b.elo}</span>${beaten.has(i) ? '<span class="beaten">✔</span>' : ''}</button>`).join('')}</div>
+        ${(() => { const card = (b, i) => `<button class="bot-card ${i === this.botIdx ? 'active' : ''} ${beaten.has(i) ? 'has-beaten' : ''}" data-act="bot" data-arg="${i}">
+          <span class="em">${b.emoji}</span><span class="nm">${b.name}</span><span class="el">${b.human ? '2 Spieler' : 'ca. ' + b.elo}</span>${beaten.has(i) ? '<span class="beaten">✔</span>' : ''}</button>`;
+          return `<div class="bot-grid">${BOTS.map((b, i) => !b.persona ? card(b, i) : '').join('')}</div>
+            <h3>🎭 Persönlichkeiten</h3><div class="bot-grid">${BOTS.map((b, i) => b.persona ? card(b, i) : '').join('')}</div>`; })()}
         <p class="muted small">${esc(this.bot.desc)}</p>
         <h3>Deine Farbe</h3>
         <div class="seg">${[['w', '♔ Weiß'], ['r', '🎲 Zufall'], ['b', '♚ Schwarz']].map(([k, l]) => `<button class="${this.colorChoice === k ? 'active' : ''}" data-act="color" data-arg="${k}">${l}</button>`).join('')}</div>
+        <h3>⏱️ Bedenkzeit</h3>
+        <div class="seg tc-seg">${TIME_CONTROLS.map(t => `<button class="${this.tc === t.id ? 'active' : ''}" data-act="tc" data-arg="${t.id}">${t.name}</button>`).join('')}</div>
         <div style="height:16px"></div>
         <button class="btn primary full" data-act="start">▶ Spielen gegen ${this.bot.name}</button>
         <div class="btn-row"><button class="btn small" data-act="place">🎯 Einstufungspartie</button><button class="btn small" data-act="pieces">🎨 Figuren ändern</button></div>
@@ -973,6 +1106,7 @@ const Play = {
       bind(p, {
         bot: i => { this.botIdx = +i; store.set('botIdx', this.botIdx); this.renderPanel(); if (!this.game) this.refresh(); },
         color: c => { this.colorChoice = c; store.set('colorChoice', c); this.renderPanel(); },
+        tc: v => { this.tc = v; store.set('timeControl', v); this.renderPanel(); },
         start: () => { this.setup = false; this.placement = null; this.start(); },
         place: () => this.startPlacement(),
         pieces: () => openPieceChooser(),
@@ -1067,17 +1201,85 @@ function moveListHtml(game, curPly, classes) {
 
 // ---------- Modus: Rätsel ----------
 const PUZZLES = (window.PUZZLES || []).slice().sort((a, b) => a.rating - b.rating);
+const PUZZLE_THEMES = [
+  ['all', 'Alle', () => true], ['mine', '⭐ Meine Fehler', null],
+  ['m1', 'Matt in 1', t => t.includes('Matt in 1')], ['m2', 'Matt in 2', t => t.includes('Matt in 2')],
+  ['m3', 'Matt in 3+', t => t.some(x => /Matt in [3-9]/.test(x))], ['Gabel', 'Gabel', t => t.includes('Gabel')],
+  ['Material gewinnen', 'Material gewinnen', t => t.includes('Material gewinnen')], ['Angriff', 'Angriff', t => t.includes('Angriff')],
+  ['Stiller Zug', 'Stiller Zug', t => t.includes('Stiller Zug')], ['Endspiel', 'Endspiel', t => t.includes('Endspiel')]
+];
+const REVIEW_DAYS = [1, 3, 7, 21];
+
+// Fehler aus eigenen Partien als persönliche Rätsel sammeln (Wiederholung in wachsenden Abständen)
+const MyPuzzles = {
+  list() { return store.get('myPuzzles', []); },
+  save(l) { store.set('myPuzzles', l.slice(-300)); },
+  due() { const now = Date.now(); return this.list().filter(p => (p.due || 0) <= now && (p.reps || 0) < REVIEW_DAYS.length); },
+  addFromGame(g) {
+    if (g.userColor == null || !g.moves || !g.evals) return 0;
+    const list = this.list(), ids = new Set(list.map(p => p.id));
+    const sgn = g.userColor === 0 ? 1 : -1, cap = v => Math.max(-1500, Math.min(1500, v));
+    const pos = new C.Position(g.startFen);
+    const fens = [pos.fen()];
+    for (const u of g.moves) { const m = pos.fromUci(u); if (!m) break; pos.make(m); fens.push(pos.fen()); }
+    let added = 0;
+    for (let i = 0; i < g.moves.length; i++) {
+      if (!['mistake', 'blunder', 'miss'].includes(g.cls[i]) || !g.best[i] || g.best[i] === g.moves[i]) continue;
+      if (g.evals[i] == null || g.evals[i + 1] == null) continue;
+      if (new C.Position(fens[i]).side !== g.userColor) continue;
+      const before = sgn * cap(g.evals[i]), after = sgn * cap(g.evals[i + 1]);
+      if (before - after < 120) continue;
+      const id = 'm:' + fens[i].split(' ').slice(0, 2).join(' ') + ':' + g.best[i];
+      if (ids.has(id)) continue;
+      ids.add(id);
+      list.push({
+        id, own: true, fen: i > 0 ? fens[i - 1] : fens[i], last: i > 0 ? g.moves[i - 1] : null,
+        sol: [g.best[i]], bestScore: before, played: g.moves[i], cls: g.cls[i],
+        themes: ['Meine Fehler', CLS[g.cls[i]].name], date: g.date || Date.now(), label: g.label || '', reps: 0, due: 0
+      });
+      added++;
+    }
+    if (added) this.save(list);
+    return added;
+  },
+  update(id, ok) {
+    const list = this.list(), p = list.find(x => x.id === id);
+    if (!p) return;
+    if (ok) { p.reps = (p.reps || 0) + 1; p.due = Date.now() + REVIEW_DAYS[Math.min(p.reps - 1, REVIEW_DAYS.length - 1)] * 86400000; }
+    else { p.reps = 0; p.due = Date.now() + 43200000; }
+    this.save(list);
+  }
+};
 const Puzzles = {
   st: Object.assign({ rating: 800, solved: 0, tries: 0, streak: 0, bestStreak: 0, peak: 800, done: {}, recent: [], diff: 0 }, store.get('puzzle', {})),
   cur: null, game: null, step: 0, failed: false, solved: false, lastDelta: null, msg: '', busy: false, token: 0,
+  theme: store.get('puzzleTheme', 'all'), view: 'train', rush: null,
 
   save() { store.set('puzzle', this.st); },
-  activate() { if (!this.cur) this.next(); else { this.refresh(); this.renderPanel(); } EvalBar.show(false); },
+  activate() {
+    EvalBar.show(false);
+    if (this.view === 'rush' && !this.rush) { this.renderPanel(); board.movable = -1; if (!this.game) { board.set(new C.Position(), {}); setStrip('top', null); setStrip('bottom', null); } else this.refresh(); return; }
+    if (!this.cur) this.next(); else { this.refresh(); this.renderPanel(); }
+  },
 
   pick() {
     if (!PUZZLES.length) return null;
-    let pool = PUZZLES.filter(p => !this.st.done[p.id]);
-    if (!pool.length) { this.st.done = {}; pool = PUZZLES; }
+    if (this.rush) {
+      const pool = PUZZLES.filter(p => !this.rush.used.has(p.id));
+      pool.sort((a, b) => Math.abs(a.rating - this.rush.rating) - Math.abs(b.rating - this.rush.rating));
+      const pz = pool[Math.floor(Math.random() * Math.min(4, pool.length))];
+      if (pz) this.rush.used.add(pz.id);
+      return pz;
+    }
+    if (this.theme === 'mine') {
+      const due = MyPuzzles.due().sort((a, b) => (a.due || 0) - (b.due || 0));
+      return due[0] || null;
+    }
+    const th = PUZZLE_THEMES.find(t => t[0] === this.theme) || PUZZLE_THEMES[0];
+    const all = PUZZLES.filter(p => th[2](p.themes));
+    let pool = all.filter(p => !this.st.done[p.id]);
+    if (!pool.length) { for (const p of all) delete this.st.done[p.id]; pool = all; }
+    if (!pool.length) return null;
     const target = this.st.rating + this.st.diff + (Math.random() * 150 - 50);
     pool.sort((a, b) => Math.abs(a.rating - target) - Math.abs(b.rating - target));
     return pool[Math.floor(Math.random() * Math.min(3, pool.length))];
@@ -1087,18 +1289,24 @@ const Puzzles = {
     const pz = this.pick();
     this.token++;
     const tok = this.token;
-    if (!pz) { $('panel-puzzle').innerHTML = '<h2>Keine Rätsel gefunden</h2><p>puzzles.js fehlt.</p>'; return; }
+    if (!pz) { this.cur = null; this.game = null; this.renderEmpty(); return; }
     this.cur = pz; this.step = 0; this.failed = false; this.solved = false; this.lastDelta = null; this.hintSq = -1; this.marks = null;
     this.game = new Game(pz.fen);
-    this.userColor = this.game.pos.side ^ 1;
+    this.userColor = pz.last ? this.game.pos.side ^ 1 : this.game.pos.side;
     board.setFlipped(this.userColor === 1);
     this.msg = '';
     this.busy = true;
     this.refresh(); this.renderPanel();
-    await sleep(600);
-    if (tok !== this.token) return;
-    const rec = this.game.play(pz.last);
-    Sound.forMove(rec, this.game.pos);
+    if (pz.last) {
+      await sleep(this.rush ? 300 : 600);
+      if (tok !== this.token) return;
+      const rec = this.game.play(pz.last);
+      Sound.forMove(rec, this.game.pos);
+    }
+    if (pz.own) {
+      const p0 = this.game.pos, pm = p0.fromUci(pz.played);
+      this.msg = `Aus deiner Partie vom ${new Date(pz.date).toLocaleDateString('de-DE')}: Hier hast du ${pm ? '<b>' + de(p0.toSan(pm)) + '</b>' : 'einen Zug'} gespielt – ${CLS[pz.cls].phrase}. Finde einen besseren Zug!`;
+    }
     this.busy = false;
     this.refresh(true); this.renderPanel();
   },
@@ -1110,11 +1318,13 @@ const Puzzles = {
     const marks = Object.assign({}, this.marks || {});
     if (this.hintSq >= 0) marks[this.hintSq] = 'hint';
     board.set(this.game.pos, { last: lm ? [lm.from, lm.to] : null, marks, animate: animate && lm ? [lm.from, lm.to] : null });
-    setStrip('top', { avatar: '🧩', name: 'Rätsel', sub: this.solved || this.failed ? `Wertung ${this.cur.rating}` : '', pos: this.game.pos, color: this.userColor ^ 1 });
+    setStrip('top', { avatar: this.cur.own ? '⭐' : '🧩', name: this.cur.own ? 'Dein Fehler' : 'Rätsel', sub: !this.cur.own && !this.rush && (this.solved || this.failed) ? `Wertung ${this.cur.rating}` : '', pos: this.game.pos, color: this.userColor ^ 1 });
     setStrip('bottom', { avatar: '🙂', name: 'Du', sub: `(${Math.round(this.st.rating)})`, pos: this.game.pos, color: this.userColor });
   },
 
   rate(win) {
+    if (this.rush) return;
+    if (this.cur.own) { MyPuzzles.update(this.cur.id, win); this.lastDelta = null; return; }
     const k = this.st.tries < 20 ? 40 : 24;
     const exp = 1 / (1 + Math.pow(10, (this.cur.rating - this.st.rating) / 400));
     const delta = Math.round(k * ((win ? 1 : 0) - exp));
@@ -1138,7 +1348,24 @@ const Puzzles = {
     if (!rec) return;
     this.hintSq = -1;
     const mate = this.game.pos.status() === 'checkmate';
-    if (uci === expected || mate) {
+    let alsoGood = false;
+    if (this.cur.own && uci !== expected && !mate) {
+      // Eigene Fehler: jeder Zug, der fast so gut ist wie der beste, zählt
+      this.busy = true; this.msg = 'Prüfe deinen Zug …';
+      this.refresh(true); this.renderPanel();
+      const tok = this.token;
+      const r = await engine.request({ cmd: 'search', fen: this.game.startFen, moves: this.game.uci(), timeMs: 700 });
+      if (tok !== this.token) return;
+      this.busy = false;
+      if (r) {
+        const mine = Math.max(-1500, Math.min(1500, -r.score)), best = this.cur.bestScore;
+        const wp = v => winPct(v);
+        alsoGood = mine >= best - 60 || wp(best) - wp(mine) < 4;
+      }
+    }
+    if (this.rush && !(uci === expected || mate)) { this.rushMiss(rec); return; }
+    if (uci === expected || mate || alsoGood) {
+      if (alsoGood) { this.step = this.cur.sol.length; this.marks = { [rec.to]: 'ok' }; Sound.forMove(rec, this.game.pos); this.finishSolved('✓ Auch ein starker Zug!'); return; }
       Sound.forMove(rec, this.game.pos);
       this.step++;
       this.marks = { [rec.to]: 'ok' };
@@ -1173,13 +1400,97 @@ const Puzzles = {
     }
   },
 
-  finishSolved() {
+  finishSolved(text) {
     this.solved = true;
     markActivity();
+    if (this.rush) { this.rushHit(); return; }
     if (!this.failed) this.rate(true);
     Sound.play('good');
-    this.msg = this.failed ? '✓ Gelöst – aber nicht im ersten Versuch.' : '🎉 Perfekt gelöst!';
+    this.msg = text || (this.failed ? '✓ Gelöst – aber nicht im ersten Versuch.' : '🎉 Perfekt gelöst!');
+    if (this.cur.own && !this.failed) this.msg += ' Dieser Fehler kommt in ein paar Tagen zur Wiederholung.';
     this.refresh(true); this.renderPanel();
+  },
+
+  // ----- Rätsel-Rush und Survival -----
+  startRush(m) {
+    const modes = { r3: { name: '3 Minuten', ms: 180000 }, r5: { name: '5 Minuten', ms: 300000 }, surv: { name: 'Survival', ms: 0 } };
+    this.rush = { mode: m, name: modes[m].name, end: modes[m].ms ? Date.now() + modes[m].ms : 0, strikes: 0, score: 0, rating: 450, used: new Set(), log: [] };
+    clearInterval(this.rushTimer);
+    this.rushTimer = setInterval(() => this.rushTick(), 200);
+    this.next();
+  },
+  rushTick() {
+    const R = this.rush;
+    if (!R) { clearInterval(this.rushTimer); return; }
+    if (R.end && Date.now() >= R.end) { this.endRush(); return; }
+    const el = $('rushTime');
+    if (el && R.end) { const left = R.end - Date.now(); el.textContent = fmtClock(left); el.classList.toggle('low', left < 15000); }
+  },
+  rushHit() {
+    const R = this.rush;
+    R.score++; R.log.push({ r: this.cur.rating, ok: true });
+    R.rating += 55 + Math.random() * 40;
+    Sound.play('good');
+    this.marks = { [this.game.moves[this.game.moves.length - 1].to]: 'ok' };
+    this.refresh(); this.renderPanel();
+    const tok = this.token;
+    setTimeout(() => { if (tok === this.token && this.rush) this.next(); }, 350);
+  },
+  rushMiss(rec) {
+    const R = this.rush;
+    R.strikes++; R.log.push({ r: this.cur.rating, ok: false });
+    R.rating = Math.max(400, R.rating - 40);
+    Sound.play('bad');
+    this.marks = { [rec.to]: 'bad' };
+    this.busy = true;
+    this.refresh(true); this.renderPanel();
+    const tok = this.token;
+    setTimeout(() => {
+      if (tok !== this.token || !this.rush) return;
+      if (R.strikes >= 3) this.endRush(); else this.next();
+    }, 700);
+  },
+  endRush() {
+    const R = this.rush;
+    if (!R) return;
+    clearInterval(this.rushTimer);
+    this.rush = null; this.token++; this.busy = false;
+    const rec = store.get('rushRecords', {});
+    const isRecord = R.score > (rec[R.mode] || 0);
+    if (isRecord) { rec[R.mode] = R.score; store.set('rushRecords', rec); }
+    markActivity();
+    Sound.play('end');
+    showModal(`<div style="font-size:54px">⚡</div><h2>${R.name}: ${R.score} gelöst</h2>
+      ${isRecord ? '<div class="xp-gain">🏆 Neuer Rekord!</div>' : `<p class="muted">Rekord: ${rec[R.mode] || 0}</p>`}
+      <div class="rush-log">${R.log.map(x => `<span class="${x.ok ? 'ok' : 'bad'}">${Math.round(x.r)}</span>`).join('')}</div>
+      <button class="btn primary full" data-act="again">Nochmal</button><button class="btn full" data-act="close">Zurück zu den Rätseln</button>`, {
+      again: () => { hideModal(); this.startRush(R.mode); },
+      close: () => { hideModal(); this.view = 'rush'; this.next(); }
+    });
+  },
+  renderEmpty() {
+    const p = $('panel-puzzle');
+    p.innerHTML = this.tabsHtml() + (this.theme === 'mine'
+      ? `<div class="status-box"><b>⭐ Keine Fehler fällig</b><div class="small" style="margin-top:4px">Hier landen automatisch deine Fehler und Patzer aus Partien gegen die Bots (mit Live-Bewertung) und aus der Partieanalyse. Spiel eine Partie oder analysiere eine – dann übst du genau deine eigenen Schwachstellen.</div>
+         <div class="small muted" style="margin-top:6px">Gespeichert: ${MyPuzzles.list().length} · später fällig: ${MyPuzzles.list().filter(x => (x.reps || 0) < REVIEW_DAYS.length && x.due > Date.now()).length}</div></div>`
+      : '<div class="status-box">Keine Rätsel für dieses Thema gefunden.</div>') + this.themesHtml();
+    this.bindCommon(p);
+    board.movable = -1; board.set(new C.Position(), {}); setStrip('top', null); setStrip('bottom', null);
+  },
+  tabsHtml() {
+    return `<div class="seg" style="margin-bottom:10px"><button class="${this.view === 'train' && !this.rush ? 'active' : ''}" data-act="view" data-arg="train">🧩 Training</button><button class="${this.view === 'rush' || this.rush ? 'active' : ''}" data-act="view" data-arg="rush">⚡ Rush</button></div>`;
+  },
+  themesHtml() {
+    const due = MyPuzzles.due().length;
+    return `<h3>Thema</h3><div class="theme-chips">${PUZZLE_THEMES.map(([id, name]) => `<button class="chip-btn ${this.theme === id ? 'active' : ''}" data-act="theme" data-arg="${id}">${name}${id === 'mine' && due ? ` <b>${due}</b>` : ''}</button>`).join('')}</div>`;
+  },
+  bindCommon(p) {
+    bind(p, {
+      view: v => { if (this.rush) { if (!confirm('Rush abbrechen?')) return; this.endRush(); hideModal(); } this.view = v; if (v === 'train' && !this.cur) this.next(); this.renderPanel(); },
+      theme: v => { this.theme = v; store.set('puzzleTheme', v); this.next(); },
+      rush: m => this.startRush(m),
+      stop: () => this.endRush()
+    });
   },
 
   hint() {
@@ -1215,29 +1526,52 @@ const Puzzles = {
 
   renderPanel() {
     const p = $('panel-puzzle'), s = this.st, pz = this.cur;
+    if (this.view === 'rush' && !this.rush) {
+      const rec = store.get('rushRecords', {});
+      p.innerHTML = this.tabsHtml() + `<h2>⚡ Rätsel-Rush</h2><p class="muted small">Löse so viele Rätsel wie möglich. Sie starten leicht und werden mit jedem gelösten Rätsel schwerer. Nach 3 Fehlern ist Schluss.</p>
+        <div class="rush-modes">
+          <button class="rush-card" data-act="rush" data-arg="r3"><span>⏱️</span><b>3 Minuten</b><small>Rekord: ${rec.r3 || 0}</small></button>
+          <button class="rush-card" data-act="rush" data-arg="r5"><span>⏳</span><b>5 Minuten</b><small>Rekord: ${rec.r5 || 0}</small></button>
+          <button class="rush-card" data-act="rush" data-arg="surv"><span>❤️</span><b>Survival</b><small>ohne Zeitlimit · Rekord: ${rec.surv || 0}</small></button>
+        </div>`;
+      this.bindCommon(p);
+      return;
+    }
     if (!pz) return;
     const side = this.userColor === 0 ? 'Weiß' : 'Schwarz';
+    if (this.rush) {
+      const R = this.rush;
+      p.innerHTML = this.tabsHtml() + `<div class="rush-head"><div><div class="muted small">${R.name}</div><div class="rating-big">${R.score}</div><div class="muted small">gelöst</div></div>
+        <div class="rush-time ${R.end ? '' : 'inf'}" id="rushTime">${R.end ? fmtClock(R.end - Date.now()) : '∞'}</div>
+        <div class="rush-lives">${[0, 1, 2].map(i => `<span class="${i < R.strikes ? 'x' : ''}">${i < R.strikes ? '✗' : '●'}</span>`).join('')}</div></div>
+        <div class="status-box ${this.marks && Object.values(this.marks)[0] === 'bad' ? 'bad' : ''}"><b>${side} am Zug</b> – finde den besten Zug!</div>
+        <div class="rush-log">${R.log.slice(-24).map(x => `<span class="${x.ok ? 'ok' : 'bad'}">${Math.round(x.r)}</span>`).join('')}</div>
+        <button class="btn full" data-act="stop">Beenden</button>`;
+      this.bindCommon(p);
+      return;
+    }
     const userMoves = Math.ceil(pz.sol.length / 2);
     const delta = this.lastDelta == null ? '' : `<span class="delta ${this.lastDelta >= 0 ? 'up' : 'down'}">${this.lastDelta >= 0 ? '+' : ''}${this.lastDelta}</span>`;
     const statusCls = this.solved && !this.failed ? 'good' : this.msg.startsWith('✗') ? 'bad' : '';
     const done = this.solved;
     const rate = s.tries ? Math.round(100 * s.solved / s.tries) : 0;
-    p.innerHTML = `<div class="row"><div><div class="muted small">Deine Rätsel-Wertung</div>
-        <div class="rating-big">${Math.round(s.rating)} ${delta}</div></div>
+    p.innerHTML = this.tabsHtml() + `<div class="row"><div><div class="muted small">${pz.own ? '⭐ Fehler-Training' : 'Deine Rätsel-Wertung'}</div>
+        <div class="rating-big">${pz.own ? MyPuzzles.due().length + '<span class="muted small" style="font-size:14px"> fällig</span>' : Math.round(s.rating) + ' ' + delta}</div></div>
         <div style="text-align:right"><div class="muted small">Serie</div><div class="rating-big">🔥${s.streak}</div></div></div>
       <div class="status-box ${statusCls}">
-        ${this.busy && !this.game.moves.length ? 'Gegner zieht …' : `<b>${side} am Zug</b> – finde den besten Zug${userMoves > 1 ? ` <span class="muted">(${userMoves} Züge)</span>` : ''}`}
+        ${this.busy && !this.game.moves.length && pz.last ? 'Gegner zieht …' : `<b>${side} am Zug</b> – finde den besten Zug${userMoves > 1 ? ` <span class="muted">(${userMoves} Züge)</span>` : ''}`}
         ${this.msg ? `<div style="margin-top:6px">${this.msg}</div>` : ''}
       </div>
-      ${done || this.failed ? `<div><span class="pill">Rätsel #${pz.id + 1}</span><span class="pill">Wertung ${pz.rating}</span>${pz.themes.map(t => `<span class="pill">${t}</span>`).join('')}</div>` : ''}
+      ${done || this.failed ? `<div>${pz.own ? '' : `<span class="pill">Rätsel #${pz.id + 1}</span><span class="pill">Wertung ${pz.rating}</span>`}${pz.themes.map(t => `<span class="pill">${t}</span>`).join('')}</div>` : ''}
       <div class="btn-row">
         <button class="btn" data-act="hint" ${done ? 'disabled' : ''}>💡 Hinweis</button>
         <button class="btn" data-act="sol" ${done ? 'disabled' : ''}>👁 Lösung</button>
       </div>
       <button class="btn ${done ? 'primary' : ''} full" data-act="next">${done ? 'Nächstes Rätsel →' : 'Überspringen →'}</button>
-      <h3>Schwierigkeit</h3>
+      ${this.themesHtml()}
+      ${this.theme === 'mine' ? '' : `<h3>Schwierigkeit</h3>
       <div class="seg">${[[-200, 'Leichter'], [0, 'Normal'], [200, 'Schwerer']].map(([v, l]) => `<button class="${s.diff === v ? 'active' : ''}" data-act="diff" data-arg="${v}">${l}</button>`).join('')}</div>
-      <p class="muted small">Die Rätsel passen sich deiner Wertung an: Löst du sie, werden sie schwieriger.</p>
+      <p class="muted small">Die Rätsel passen sich deiner Wertung an: Löst du sie, werden sie schwieriger.</p>`}
       <h3>Statistik</h3>
       <div class="stat-grid">
         <div class="stat"><b>${s.solved}</b><span>Gelöst</span></div>
@@ -1245,16 +1579,19 @@ const Puzzles = {
         <div class="stat"><b>${Math.round(s.peak)}</b><span>Höchstwert</span></div>
         <div class="stat"><b>${s.tries}</b><span>Versuche</span></div>
         <div class="stat"><b>${s.bestStreak}</b><span>Beste Serie</span></div>
-        <div class="stat"><b>${PUZZLES.length}</b><span>Rätsel gesamt</span></div>
+        <div class="stat"><b>${MyPuzzles.list().length}</b><span>Eigene Fehler</span></div>
       </div>
       ${s.recent.length ? `<h3>Letzte Rätsel</h3><div>${s.recent.map(r => `<span class="pill" style="background:${r.ok ? '#3f4a35' : '#5a2f2b'}">${r.ok ? '✓' : '✗'} ${r.r}</span>`).join('')}</div>` : ''}
       <div style="height:10px"></div>
       <button class="btn small" data-act="reset">Fortschritt zurücksetzen</button>`;
+    this.bindCommon(p);
     bind(p, {
       hint: () => this.hint(),
       sol: () => this.solution(),
       next: () => { if (!this.solved && !this.failed && this.game.moves.length) this.rate(false); this.showing = false; this.next(); },
       diff: v => { s.diff = +v; this.save(); this.renderPanel(); },
+      view: v => { this.view = v; this.renderPanel(); },
+      theme: v => { this.theme = v; store.set('puzzleTheme', v); this.next(); },
       reset: () => {
         if (!confirm('Rätsel-Wertung und Statistik wirklich zurücksetzen?')) return;
         this.st = { rating: 800, solved: 0, tries: 0, streak: 0, bestStreak: 0, peak: 800, done: {}, recent: [], diff: 0 };
@@ -1370,6 +1707,8 @@ const Analysis = {
     this.classify();
     this.running = false;
     this.done = true;
+    this.addedMistakes = MyPuzzles.addFromGame({ startFen: this.game.startFen, moves: this.game.uci(), evals: this.evals, best: this.best, cls: this.cls,
+      userColor: this.record.userColor, date: this.record.date, label: '' });
     if (this.record.id && this.record.userColor != null) {
       const games = store.get('games', []), gi = games.findIndex(x => x.id === this.record.id);
       if (gi >= 0) { games[gi].acc = Math.round(this.summary[this.record.userColor].acc * 10) / 10; store.set('games', games); }
@@ -1532,6 +1871,7 @@ const Analysis = {
       const curGame = Play.game && Play.game.moves.length;
       p.innerHTML = `<h2>Partieanalyse</h2>
         <p class="muted small">Die Engine bewertet jeden Zug, berechnet deine Genauigkeit und zeigt dir Fehler und bessere Züge.</p>
+        <div class="btn-row"><button class="btn" data-act="free">🔍 Analysebrett</button><button class="btn" data-act="editor">✏️ Stellung aufbauen</button></div>
         ${curGame ? '<button class="btn primary full" data-act="cur">Aktuelle Partie analysieren</button>' : ''}
         <h3>Gespeicherte Partien</h3>${listHtml}
         <h3>PGN einfügen</h3>
@@ -1550,6 +1890,7 @@ const Analysis = {
           </div>
           <table class="cls-table">${CLS_ORDER.map(k => `<tr><td class="n ${s[0].counts[k] ? '' : 'zero'}">${s[0].counts[k]}</td><td><span class="cls-dot" style="background:${CLS[k].color}">${CLS[k].sym}</span> ${CLS[k].name}</td><td class="n ${s[1].counts[k] ? '' : 'zero'}">${s[1].counts[k]}</td></tr>`).join('')}</table>` : ''}
         <div style="height:8px"></div>
+        ${this.done && this.addedMistakes ? `<div class="status-box good small">⭐ <b>${this.addedMistakes} ${this.addedMistakes === 1 ? 'Fehler' : 'Fehler'}</b> ins Fehler-Training übernommen. <button class="btn small" data-act="mistakes">Jetzt üben</button></div>` : ''}
         <svg class="graph" id="anaGraph" viewBox="0 0 400 90" preserveAspectRatio="none"></svg>
         <div class="explain" id="anaExplain"></div>
         <div class="btn-row">
@@ -1558,6 +1899,7 @@ const Analysis = {
           <button class="btn small" data-act="flip">⇅ Drehen</button>
         </div>
         <div class="movelist" id="anaMoves"></div>
+        <div class="btn-row"><button class="btn small" data-act="fromhere">♟ Ab hier spielen</button><button class="btn small" data-act="board">🔍 Analysebrett</button></div>
         <div class="btn-row"><button class="btn small" data-act="pgn">📋 PGN kopieren</button><button class="btn small" data-act="redo">↻ Neu analysieren</button></div>
         ${settings}`;
       const graph = $('anaGraph');
@@ -1596,7 +1938,12 @@ const Analysis = {
       best: () => { this.showBest = !this.showBest; this.renderPanel(); this.refresh(); },
       flip: () => { board.setFlipped(!board.flipped); this.refresh(); },
       pgn: () => copyText(this.game.pgn(this.record)),
-      redo: () => this.loadRecord(this.record)
+      redo: () => this.loadRecord(this.record),
+      fromhere: () => { const p = this.game.positionAt(this.ply); openPlayFrom(p.fen()); },
+      board: () => Free.open(this.game.startFen, this.game.uci(), this.ply),
+      free: () => Free.open(),
+      editor: () => Editor.open(),
+      mistakes: () => { Puzzles.theme = 'mine'; store.set('puzzleTheme', 'mine'); Puzzles.view = 'train'; Puzzles.cur = null; switchTab('puzzle'); }
     });
     const sel = $('anaTime');
     if (sel) sel.onchange = e => { this.timeMs = +e.target.value; store.set('anaTime', this.timeMs); };
@@ -1613,10 +1960,11 @@ function showModal(html, actions) {
 function hideModal() { $('modal').classList.add('hidden'); }
 $('modal').addEventListener('click', e => { if (e.target.id === 'modal') hideModal(); });
 
-function copyText(t) {
-  const done = () => showModal('<h2>📋 Kopiert</h2><p class="muted">PGN ist in der Zwischenablage.</p><button class="btn full" data-act="c">OK</button>', { c: hideModal });
+function copyText(t, what) {
+  what = what || 'PGN';
+  const done = () => showModal(`<h2>📋 Kopiert</h2><p class="muted">${what} ist in der Zwischenablage.</p><button class="btn full" data-act="c">OK</button>`, { c: hideModal });
   const fallback = () => {
-    showModal(`<h2>PGN</h2><textarea readonly style="min-height:180px">${esc(t)}</textarea><button class="btn full" data-act="c">Schließen</button>`, { c: hideModal });
+    showModal(`<h2>${what}</h2><textarea readonly style="min-height:180px">${esc(t)}</textarea><button class="btn full" data-act="c">Schließen</button>`, { c: hideModal });
   };
   if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(t).then(done, fallback);
   else fallback();
@@ -1684,6 +2032,7 @@ const Learn = {
       </div>
       <div class="learn-actions">
         <button class="btn primary" data-act="mix" ${canMix ? '' : 'disabled'}>🔁 Übungs-Mix</button>
+        <button class="btn" data-act="endgames">🏁 Endspiel-Trainer</button>
         <button class="btn" data-act="placement">🎯 Einstufungspartie</button>
       </div>`;
     let lastUi = -1;
@@ -1701,7 +2050,7 @@ const Learn = {
       const stars = this.st.done[l.id];
       const unlocked = this.isUnlocked(k), current = k === next;
       const cls = stars != null ? 'done' : current ? 'current' : unlocked ? 'open' : 'locked';
-      const xoff = Math.round(Math.sin((k + 1) * 1.1) * 70);
+      const xoff = Math.round(Math.sin((k + 1) * 1.1) * Math.max(20, Math.min(70, (Math.min(window.innerWidth, document.documentElement.clientWidth) - 200) / 2)));
       const icon = stars != null ? (l.review ? '🔁' : '✓') : unlocked ? l.icon : '🔒';
       html += `<div class="node-wrap" style="transform:translateX(${xoff}px)">
         ${current ? '<div class="go-bubble">LOS!</div>' : ''}
@@ -1716,10 +2065,27 @@ const Learn = {
       open: k => this.start(+k),
       mix: () => this.startMix(),
       placement: () => { if (doneCount === 0 || confirm('Einstufungspartie starten? Danach werden die Kapitel bis zu deinem Niveau freigeschaltet.')) this.startPlacement(); },
-      jump: ui => this.startJump(+ui)
+      jump: ui => this.startJump(+ui),
+      endgames: () => this.renderEndgames()
     });
     const cur = $('learn').querySelector('.node.current');
     if (cur) setTimeout(() => cur.scrollIntoView({ block: 'center', behavior: 'smooth' }), 50);
+  },
+
+  renderEndgames() {
+    this.view = 'endgames';
+    const eg = this.st.endgames || {};
+    $('learn').innerHTML = `<div class="learn-head"><div><h1>🏁 Endspiel-Trainer</h1><p class="muted">Die wichtigsten Endspiel-Techniken – gegen die Engine, die sich bestmöglich verteidigt.</p></div>
+        <button class="btn" data-act="back">← Lernpfad</button></div>
+      <div class="eg-grid">${ENDGAMES.map(g => { const r = eg[g.id]; return `<button class="eg-card ${r ? 'done' : ''}" data-act="eg" data-arg="${g.id}">
+        <div class="eg-ic">${g.icon}</div><div><b>${g.title}</b><div class="muted small">${g.level} · ${g.step.t === 'hold' ? 'Remis halten' : g.step.t === 'promote' ? 'Bauer umwandeln' : 'Matt setzen'} · max. ${g.step.max} Züge</div>
+        ${r ? `<div class="eg-best">✓ geschafft${r.best ? ` · Bestwert ${r.best} Züge` : ''}</div>` : ''}</div></button>`; }).join('')}</div>`;
+    bind($('learn'), { back: () => { this.view = null; this.renderPath(); }, eg: id => this.startEndgame(id) });
+  },
+  startEndgame(id) {
+    const g = ENDGAMES.find(x => x.id === id);
+    if (!g) return;
+    this.begin({ kind: 'endgame', id: g.id, title: g.title, icon: g.icon, steps: [{ t: 'info', text: g.info }, g.step] }, null);
   },
 
   renderOnboarding() {
@@ -1783,9 +2149,10 @@ const Learn = {
   exit() {
     this.token++;
     engine.cancel();
+    const wasEndgame = this.lesson && this.lesson.kind === 'endgame';
     this.lesson = null;
     this.setMode('path');
-    this.renderPath();
+    if (wasEndgame) this.renderEndgames(); else this.renderPath();
   },
   get step() { return this.lesson.steps[this.idx]; },
 
@@ -1799,7 +2166,8 @@ const Learn = {
     this.pos = fen ? this.makePos(fen, st.t === 'collect') : null;
     this.stars = (st.stars || []).map(C.parseSq);
     const interactive = !['info', 'quiz'].includes(st.t);
-    board.setFlipped(!!(interactive && this.pos && this.pos.side === 1 && !st.last) || !!(st.last && this.pos && this.pos.side === 0));
+    this.userSide = st.user ? (st.user === 'b' ? 1 : 0) : this.pos ? (st.last ? this.pos.side ^ 1 : this.pos.side) : 0;
+    board.setFlipped(!!(interactive && this.pos && this.userSide === 1));
     if (st.last) {
       this.locked = true;
       this.draw();
@@ -1817,6 +2185,7 @@ const Learn = {
       }, 700);
     } else this.draw();
     this.renderBar();
+    if (this.pos && ['hold', 'playmate', 'promote'].includes(st.t) && this.pos.side !== this.userSide) this.engineReply();
   },
 
   makePos(fen, collect) {
@@ -1857,7 +2226,7 @@ const Learn = {
       <div class="lt-title">${this.lesson.icon} ${this.lesson.title}</div>`;
     bind($('lessonTop'), { close: () => { if (this.idx === 0 || confirm('Lektion verlassen? Dein Fortschritt in dieser Lektion geht verloren.')) this.exit(); } });
 
-    const typeLabel = { info: '📖 Lernen', quiz: '❓ Frage', collect: '⭐ Sammeln', move: '🎯 Finde den Zug', check: '⚡ Schach geben', mate: '👑 Matt in 1', any: '🛡️ Rette den König', line: '⚔️ Taktik', playmate: '🏆 Prüfung', promote: '👑 Umwandeln' }[st.t];
+    const typeLabel = { info: '📖 Lernen', quiz: '❓ Frage', collect: '⭐ Sammeln', move: '🎯 Finde den Zug', check: '⚡ Schach geben', mate: '👑 Matt in 1', any: '🛡️ Rette den König', line: '⚔️ Taktik', playmate: '🏆 Prüfung', promote: '👑 Umwandeln', hold: '🛡️ Halten' }[st.t];
     const testInfo = this.isTest ? ` · Frage ${this.idx + 1}/${n}` : '';
     let html = `<div class="lb-type">${typeLabel}${testInfo}</div><div class="lb-text">${mdText(st.t === 'quiz' ? st.q : st.text)}</div>`;
     if (st.t === 'quiz') {
@@ -1866,7 +2235,7 @@ const Learn = {
         return `<button class="opt ${c}" data-act="opt" data-arg="${i}" ${this.solved || this.wrongOpts.has(i) ? 'disabled' : ''}>${esc(o)}</button>`;
       }).join('')}</div>`;
     }
-    if (st.t === 'playmate' || st.t === 'promote') html += `<div class="lb-count">Zug ${this.userMoves} von ${st.max}</div>`;
+    if (['playmate', 'promote', 'hold'].includes(st.t)) html += `<div class="lb-count">Zug ${this.userMoves} von ${st.max}</div>`;
     if (this.fb) html += `<div class="lb-fb ${this.fb.ok ? 'ok' : 'bad'}"><b>${this.fb.title}</b>${this.fb.text ? ' ' + mdText(this.fb.text) : ''}</div>`;
     if (this.solved) html += `<button class="btn primary full lb-next" data-act="next">${this.idx + 1 >= n ? 'Abschließen' : 'Weiter'}</button>`;
     else if (this.fb && !this.fb.ok && this.fb.retry) html += `<button class="btn full" data-act="retry">↻ Nochmal versuchen</button>`;
@@ -2013,9 +2382,15 @@ const Learn = {
           }, 650);
         } else this.wrong('Das ist nicht der stärkste Zug. Schau, welche Figuren auf einer Linie stehen!', true);
         break;
+      case 'hold':
+        this.userMoves++;
+        if (status && status !== 'checkmate') { this.success('Remis! Du hast die Stellung gehalten. 🛡️'); return; }
+        if (this.userMoves >= st.max) { this.success(`${st.max} Züge gehalten – das ist Remis! 🛡️`); return; }
+        this.engineReply();
+        break;
       case 'promote':
         this.userMoves++;
-        if (uci.length === 5) { this.success('Umgewandelt – eine neue Dame! 👑'); return; }
+        if (uci.length === 5) { this.checkPromotion(); return; }
         if (status) { this.failPlay('Die Partie ist remis – der Bauer kommt nicht mehr durch.'); return; }
         if (this.userMoves >= st.max) { this.failPlay(`${st.max} Züge sind um. Der König muss dem Bauern den Weg bahnen!`); return; }
         this.engineReply();
@@ -2028,6 +2403,17 @@ const Learn = {
         this.engineReply();
         break;
     }
+  },
+
+  // Nach der Umwandlung prüfen, ob die neue Dame auch überlebt
+  async checkPromotion() {
+    this.locked = true;
+    this.draw(true); this.renderBar();
+    const tok = this.token;
+    const r = await engine.request({ cmd: 'search', fen: this.startFen, moves: this.history, timeMs: 600 });
+    if (tok !== this.token) return;
+    if (!r || -r.score > 400) this.success('Umgewandelt – eine neue Dame! 👑');
+    else this.failPlay('Umgewandelt – aber die neue Dame geht sofort verloren. Sichere die Umwandlung vorher ab!');
   },
 
   failPlay(text) {
@@ -2052,8 +2438,12 @@ const Learn = {
     this.pos.make(m);
     this.history.push(r.move);
     Sound.forMove({ capture: cap, san }, this.pos);
-    const st = this.pos.status();
-    if (st) { this.failPlay(st === 'insufficient' ? (this.step.t === 'promote' ? 'Der Bauer wurde geschlagen – jetzt ist es remis.' : 'Deine Figur wurde geschlagen – jetzt kann niemand mehr gewinnen.') : 'Die Partie ist remis.'); return; }
+    const st = this.pos.status(), t = this.step.t;
+    if (t === 'hold') {
+      if (r.move.length === 5) { this.failPlay('Der Bauer ist durchgekommen. Bleib mit dem König vor dem Bauern und halte die Opposition!'); return; }
+      if (st === 'checkmate') { this.failPlay('Schachmatt – leider verloren.'); return; }
+      if (st) { this.success('Remis! Du hast die Stellung gehalten. 🛡️'); return; }
+    } else if (st) { this.failPlay(st === 'insufficient' ? (t === 'promote' ? 'Der Bauer wurde geschlagen – jetzt ist es remis.' : 'Deine Figur wurde geschlagen – jetzt kann niemand mehr gewinnen.') : 'Die Partie ist remis.'); return; }
     this.locked = false;
     this.draw(true); this.renderBar();
   },
@@ -2076,6 +2466,19 @@ const Learn = {
 
   finish() {
     const stars = this.mistakes === 0 ? 3 : this.mistakes <= 2 ? 2 : 1;
+    if (this.lesson.kind === 'endgame') {
+      const eg = this.st.endgames = this.st.endgames || {}, id = this.lesson.id, moves = this.userMoves;
+      const prev = eg[id], record = !prev || !prev.best || moves < prev.best;
+      eg[id] = { best: prev && prev.best ? Math.min(prev.best, moves) : moves };
+      this.st.xp += 15; this.save(); markActivity(); Sound.play('end');
+      showModal(`<div style="font-size:54px">${this.lesson.icon}</div><h2>Endspiel gemeistert!</h2>
+        <p class="muted">${this.lesson.title} in <b>${moves}</b> Zügen${record && prev ? ' – neuer Bestwert!' : ''}</p><div class="xp-gain">+15 XP</div>
+        <button class="btn primary full" data-act="again">Nochmal</button><button class="btn full" data-act="list">Zum Endspiel-Trainer</button>`, {
+        again: () => { hideModal(); this.startEndgame(id); },
+        list: () => { hideModal(); this.token++; engine.cancel(); this.lesson = null; this.setMode('path'); this.renderEndgames(); }
+      });
+      return;
+    }
     if (this.lesson.kind === 'mix') {
       const xp = 5 + stars * 5;
       this.st.xp += xp; this.save(); markActivity(); Sound.play('end');
@@ -2353,21 +2756,302 @@ const Openings = {
   }
 };
 
+// ---------- Freies Analysebrett ----------
+const Free = {
+  game: new Game(), ply: 0, engineOn: store.get('freeEngine', true), lines: [], token: 0, multi: 3,
+
+  open(fen, moves, ply) {
+    this.game = Game.fromUci(fen || C.START_FEN, moves || []);
+    this.ply = ply != null ? Math.min(ply, this.game.moves.length) : this.game.moves.length;
+    switchTab('free');
+  },
+  activate() { this.refresh(); this.renderPanel(); this.analyse(); },
+  pos() { return this.game.positionAt(this.ply); },
+
+  onUserMove(uci) {
+    // Zug aus einer früheren Stellung: ab hier neue Variante
+    if (this.ply < this.game.moves.length) this.game = Game.fromUci(this.game.startFen, this.game.uci().slice(0, this.ply));
+    const rec = this.game.play(uci);
+    if (!rec) return;
+    Sound.forMove(rec, this.game.pos);
+    this.ply = this.game.moves.length;
+    this.lines = [];
+    this.refresh(true); this.renderPanel(); this.analyse();
+  },
+  go(p) {
+    this.ply = Math.max(0, Math.min(this.game.moves.length, p));
+    this.lines = [];
+    this.refresh(); this.renderPanel(); this.analyse();
+  },
+
+  async analyse() {
+    const tok = ++this.token;
+    this.lines = [];
+    freeEngine = freeEngine || new EngineClient();
+    if (this.busy) freeEngine.cancel();
+    this.busy = false;
+    const pos = this.pos(), st = pos.status();
+    this.status = st;
+    if (!this.engineOn) { this.renderLines(); return; }
+    if (st) { EvalBar.set(st === 'checkmate' ? (pos.side ? C.MATE : -C.MATE) : 0); this.renderLines(); return; }
+    const moves = this.game.uci().slice(0, this.ply), exclude = [];
+    const n = Math.min(this.multi, pos.legalMoves().length);
+    this.renderLines();
+    this.busy = true;
+    for (let i = 0; i < n; i++) {
+      const r = await freeEngine.request({ cmd: 'search', fen: this.game.startFen, moves, timeMs: i === 0 ? 900 : 500, exclude: exclude.slice() });
+      if (tok !== this.token) return;
+      if (!r || !r.move) { this.busy = false; return; }
+      exclude.push(r.move);
+      this.lines.push({ move: r.move, score: pos.side === 0 ? r.score : -r.score, pv: r.pv, depth: r.depth });
+      if (i === 0) EvalBar.set(this.lines[0].score);
+      this.refresh(); this.renderLines();
+    }
+    this.busy = false;
+  },
+
+  refresh(animate) {
+    if (mode !== 'free') return;
+    const pos = this.pos(), lm = this.game.moves[this.ply - 1];
+    board.movable = pos.status() ? -1 : pos.side;
+    const colors = ['rgba(124,196,127,.9)', 'rgba(80,160,255,.65)', 'rgba(80,160,255,.4)'];
+    const arrows = this.engineOn ? this.lines.map((l, i) => ({ from: C.parseSq(l.move.slice(0, 2)), to: C.parseSq(l.move.slice(2, 4)), color: colors[i] })).reverse() : [];
+    board.set(pos, { last: lm ? [lm.from, lm.to] : null, arrows, animate: animate && lm ? [lm.from, lm.to] : null });
+    EvalBar.show(this.engineOn);
+    setStrip('top', null); setStrip('bottom', null);
+    renderBoardNav();
+  },
+
+  sanLine(pv, n) {
+    const p = this.pos(), out = [];
+    let num = p.full, first = true;
+    for (const u of (pv || []).slice(0, n)) {
+      const m = p.fromUci(u);
+      if (!m) break;
+      const san = de(p.toSan(m));
+      out.push(p.side === 0 ? `${num}. ${san}` : first ? `${num}… ${san}` : san);
+      if (p.side === 1) num++;
+      p.make(m);
+      first = false;
+    }
+    return out.join(' ');
+  },
+
+  renderLines() {
+    const box = $('freeLines');
+    if (!box) return;
+    if (!this.engineOn) { box.innerHTML = '<div class="muted small">Engine ist aus.</div>'; return; }
+    if (this.status) { box.innerHTML = `<div class="status-box"><b>${STATUS_TEXT[this.status]}</b></div>`; return; }
+    if (!this.lines.length) { box.innerHTML = '<div class="muted small">Engine rechnet …</div>'; return; }
+    box.innerHTML = this.lines.map((l, i) => `<button class="eng-line" data-i="${i}"><span class="eng-ev ${l.score >= 0 ? 'w' : 'b'}">${fmtEval(l.score)}</span><span class="eng-pv">${this.sanLine(l.pv, 8)}</span></button>`).join('')
+      + `<div class="muted small">Tiefe ${this.lines[0].depth} · Tippe eine Zeile, um ihren ersten Zug zu spielen.</div>`;
+    box.querySelectorAll('.eng-line').forEach(b => b.onclick = () => this.onUserMove(this.lines[+b.dataset.i].move));
+  },
+
+  renderPanel() {
+    const p = $('panel-free');
+    const pos = this.pos();
+    p.innerHTML = `<div class="panel-head"><div class="big-ic">🔍</div><div><h2>Analysebrett</h2><div class="muted">Beide Seiten ziehen frei · ${pos.side === 0 ? 'Weiß' : 'Schwarz'} am Zug</div></div></div>
+      <div class="row"><label class="chk"><input type="checkbox" id="freeEng" ${this.engineOn ? 'checked' : ''}> Engine-Vorschläge (3 beste Züge)</label></div>
+      <div id="freeLines" class="eng-lines"></div>
+      <div class="movelist" id="freeMoves"></div>
+      <div class="btn-row">
+        <button class="btn small" data-act="flip">⇅ Drehen</button>
+        <button class="btn small" data-act="reset">↺ Startstellung</button>
+        <button class="btn small" data-act="edit">✏️ Bearbeiten</button>
+      </div>
+      <button class="btn primary full" data-act="play">♟ Ab hier gegen den Bot spielen</button>
+      <div class="btn-row"><button class="btn small" data-act="fen">📋 FEN</button><button class="btn small" data-act="pgn">📋 PGN</button></div>
+      <h3>Stellung oder Partie laden</h3>
+      <textarea id="freeIn" placeholder="FEN (z. B. r1bqkbnr/pppp1ppp/2n5/…) oder PGN einfügen"></textarea>
+      <div style="height:6px"></div><button class="btn full" data-act="load">Laden</button>`;
+    bind(p, {
+      flip: () => { board.setFlipped(!board.flipped); this.refresh(); },
+      reset: () => { this.game = new Game(); this.ply = 0; this.activate(); },
+      edit: () => Editor.open(pos.fen()),
+      play: () => openPlayFrom(pos.fen(), pos.side),
+      fen: () => copyText(pos.fen(), 'FEN'),
+      pgn: () => copyText(this.game.pgn({ white: '?', black: '?', result: '*' })),
+      load: () => {
+        const t = $('freeIn').value.trim();
+        if (!t) return;
+        try {
+          if (/^[pnbrqkPNBRQK1-8]+(\/[pnbrqkPNBRQK1-8]+){7}\s+[wb]/.test(t)) {
+            const err = validateFen(t);
+            if (err) throw new Error(err);
+            this.game = new Game(t); this.ply = 0;
+          } else {
+            const { game } = parsePgn(t);
+            this.game = game; this.ply = game.moves.length;
+          }
+          this.activate();
+        } catch (e) { alert(e.message); }
+      }
+    });
+    $('freeEng').onchange = e => { this.engineOn = e.target.checked; store.set('freeEngine', this.engineOn); this.refresh(); this.analyse(); };
+    const box = $('freeMoves');
+    box.innerHTML = moveListHtml(this.game, this.ply, null);
+    box.querySelectorAll('[data-ply]').forEach(e => e.onclick = () => this.go(+e.dataset.ply));
+    scrollListTo(box, box.querySelector('.cur'));
+    this.renderLines();
+  }
+};
+
+// Prüft eine FEN auf Spielbarkeit; gibt eine Fehlermeldung oder null zurück
+function validateFen(fen) {
+  const parts = fen.trim().split(/\s+/);
+  const rows = parts[0].split('/');
+  if (rows.length !== 8) return 'Die Stellung braucht genau 8 Reihen.';
+  const count = c => (parts[0].match(new RegExp(c, 'g')) || []).length;
+  if (count('K') !== 1 || count('k') !== 1) return 'Jede Seite braucht genau einen König.';
+  if (/[pP]/.test(rows[0]) || /[pP]/.test(rows[7])) return 'Bauern dürfen nicht auf der ersten oder letzten Reihe stehen.';
+  if (count('[PNBRQK]') > 16 || count('[pnbrqk]') > 16) return 'Zu viele Figuren für eine Seite (höchstens 16).';
+  let p;
+  try { p = new C.Position(fen); } catch (e) { return 'Ungültige Stellung.'; }
+  if (p.attacked(p.kingSq[p.side ^ 1], p.side)) return 'Die Seite, die nicht am Zug ist, steht im Schach – so eine Stellung ist unmöglich.';
+  return null;
+}
+
+// Partie ab einer Stellung starten – Farbe abfragen
+function openPlayFrom(fen, side) {
+  const err = validateFen(fen);
+  if (err) { alert(err); return; }
+  const p = new C.Position(fen);
+  if (p.status() === 'checkmate' || p.status() === 'stalemate') { alert('In dieser Stellung ist die Partie schon vorbei.'); return; }
+  const b = Play.bot.persona || Play.bot.human || Play.placement ? BOTS[3] : Play.bot;
+  showModal(`<h2>♟ Ab hier spielen</h2><p class="muted">${p.side === 0 ? 'Weiß' : 'Schwarz'} ist am Zug. Gegen ${b.emoji} ${b.name} (ca. ${b.elo}) – den Gegner kannst du danach unter „Neues Spiel“ ändern.</p>
+    <button class="btn primary full" data-act="w">♔ Ich spiele Weiß</button><button class="btn primary full" data-act="b">♚ Ich spiele Schwarz</button>
+    <button class="btn full" data-act="c">Abbrechen</button>`, {
+    w: () => { hideModal(); Play.botIdx = BOTS.indexOf(b); Play.startFrom(fen, 0); },
+    b: () => { hideModal(); Play.botIdx = BOTS.indexOf(b); Play.startFrom(fen, 1); },
+    c: hideModal
+  });
+}
+
+// ---------- Stellungs-Editor ----------
+const Editor = {
+  cells: Array(64).fill(''), side: 'w', castle: { K: true, Q: true, k: true, q: true }, tool: 'P',
+
+  open(fen) { this.loadFen(fen || C.START_FEN); switchTab('editor'); },
+  loadFen(fen) {
+    const parts = fen.trim().split(/\s+/);
+    this.cells = Array(64).fill('');
+    let r = 7, f = 0;
+    for (const ch of parts[0]) {
+      if (ch === '/') { r--; f = 0; continue; }
+      if (/\d/.test(ch)) { f += +ch; continue; }
+      if (r >= 0 && f < 8) this.cells[r * 8 + f] = ch;
+      f++;
+    }
+    this.side = parts[1] === 'b' ? 'b' : 'w';
+    const cs = parts[2] || '-';
+    this.castle = { K: cs.includes('K'), Q: cs.includes('Q'), k: cs.includes('k'), q: cs.includes('q') };
+  },
+  placement() {
+    const rows = [];
+    for (let r = 7; r >= 0; r--) {
+      let row = '', e = 0;
+      for (let f = 0; f < 8; f++) { const c = this.cells[r * 8 + f]; if (!c) { e++; continue; } if (e) { row += e; e = 0; } row += c; }
+      rows.push(row + (e || ''));
+    }
+    return rows.join('/');
+  },
+  fen() {
+    const c = this.cells, cs = this.castle;
+    let castle = '';
+    if (cs.K && c[4] === 'K' && c[7] === 'R') castle += 'K';
+    if (cs.Q && c[4] === 'K' && c[0] === 'R') castle += 'Q';
+    if (cs.k && c[60] === 'k' && c[63] === 'r') castle += 'k';
+    if (cs.q && c[60] === 'k' && c[56] === 'r') castle += 'q';
+    return `${this.placement()} ${this.side} ${castle || '-'} - 0 1`;
+  },
+  activate() {
+    board.editHandler = sq => this.click(sq);
+    EvalBar.show(false);
+    this.refresh(); this.renderPanel();
+  },
+  click(sq) {
+    const i = (sq >> 4) * 8 + (sq & 7);
+    if (this.tool === 'x' || this.cells[i] === this.tool) this.cells[i] = '';
+    else {
+      if (this.tool === 'K' || this.tool === 'k') this.cells = this.cells.map(c => c === this.tool ? '' : c);
+      this.cells[i] = this.tool;
+    }
+    Sound.play('move');
+    this.refresh(); this.renderStatus();
+  },
+  refresh() {
+    if (mode !== 'editor') return;
+    let p;
+    try { p = new C.Position(this.fen()); } catch (e) { p = new C.Position('8/8/8/8/8/8/8/8 w - - 0 1'); }
+    if (!this.cells.includes('K') || !this.cells.includes('k')) p.inCheck = () => false;
+    board.movable = -1;
+    board.set(p, {});
+    setStrip('top', null); setStrip('bottom', null);
+    renderBoardNav();
+  },
+  renderStatus() {
+    const el = $('edStatus');
+    if (!el) return;
+    const err = validateFen(this.fen());
+    el.className = 'status-box ' + (err ? 'bad' : 'good');
+    el.innerHTML = err ? '⚠️ ' + err : '✓ Gültige Stellung';
+    $('edFen').value = this.fen();
+    p_disable(['edAna', 'edPlay'], !!err);
+  },
+  renderPanel() {
+    const p = $('panel-editor');
+    const codes = 'KQRBNP';
+    const pal = c => `<button class="pal ${this.tool === c ? 'active' : ''}" data-act="tool" data-arg="${c}">${pieceHtml(codes.indexOf(c.toUpperCase()) === -1 ? 0 : ((6 - codes.indexOf(c.toUpperCase())) | (c === c.toLowerCase() ? 8 : 0)))}</button>`;
+    p.innerHTML = `<div class="panel-head"><div class="big-ic">✏️</div><div><h2>Stellung aufbauen</h2><div class="muted">Figur wählen, dann aufs Feld tippen</div></div></div>
+      <div class="palette">${[...'KQRBNP'].map(pal).join('')}${[...'kqrbnp'].map(pal).join('')}<button class="pal eraser ${this.tool === 'x' ? 'active' : ''}" data-act="tool" data-arg="x">🧽</button></div>
+      <p class="muted small">Tippe nochmal auf eine gleiche Figur, um sie zu entfernen.</p>
+      <h3>Am Zug</h3>
+      <div class="seg">${[['w', '♔ Weiß'], ['b', '♚ Schwarz']].map(([v, l]) => `<button class="${this.side === v ? 'active' : ''}" data-act="side" data-arg="${v}">${l}</button>`).join('')}</div>
+      <h3>Rochade erlaubt</h3>
+      <div class="castle-row">${[['K', 'Weiß kurz'], ['Q', 'Weiß lang'], ['k', 'Schwarz kurz'], ['q', 'Schwarz lang']].map(([k, l]) => `<label class="chk"><input type="checkbox" data-c="${k}" ${this.castle[k] ? 'checked' : ''}> ${l}</label>`).join('')}</div>
+      <div class="btn-row"><button class="btn small" data-act="start">Startstellung</button><button class="btn small" data-act="clear">Leeren</button><button class="btn small" data-act="flip">⇅ Drehen</button></div>
+      <div id="edStatus" class="status-box"></div>
+      <button class="btn primary full" id="edAna" data-act="ana">🔍 Analysieren</button>
+      <div style="height:6px"></div>
+      <button class="btn full" id="edPlay" data-act="play">♟ Gegen den Bot spielen</button>
+      <h3>FEN</h3>
+      <textarea id="edFen" style="min-height:56px"></textarea>
+      <div style="height:6px"></div>
+      <div class="btn-row"><button class="btn small" data-act="loadfen">FEN übernehmen</button><button class="btn small" data-act="copy">📋 Kopieren</button></div>`;
+    bind(p, {
+      tool: c => { this.tool = c; this.renderPanel(); },
+      side: v => { this.side = v; this.renderPanel(); this.refresh(); },
+      start: () => { this.loadFen(C.START_FEN); this.refresh(); this.renderPanel(); },
+      clear: () => { this.cells = Array(64).fill(''); this.cells[4] = 'K'; this.cells[60] = 'k'; this.refresh(); this.renderPanel(); },
+      flip: () => { board.setFlipped(!board.flipped); this.refresh(); },
+      ana: () => { const f = this.fen(); if (!validateFen(f)) Free.open(f); },
+      play: () => { const f = this.fen(); if (!validateFen(f)) openPlayFrom(f); },
+      loadfen: () => { const f = $('edFen').value.trim(); const e = validateFen(f); if (e && !/^\S+\s+[wb]/.test(f)) { alert('Ungültige FEN'); return; } try { this.loadFen(f); this.refresh(); this.renderPanel(); } catch (x) { alert('Ungültige FEN'); } },
+      copy: () => copyText(this.fen(), 'FEN')
+    });
+    p.querySelectorAll('[data-c]').forEach(cb => cb.onchange = () => { this.castle[cb.dataset.c] = cb.checked; this.renderStatus(); });
+    this.renderStatus();
+  }
+};
+function p_disable(ids, v) { for (const id of ids) { const el = $(id); if (el) el.disabled = v; } }
+
 // ---------- Steuerleiste unter dem Brett ----------
 function renderBoardNav() {
   const nav = $('boardNav');
   const ana = mode === 'analysis' && Analysis.game, play = mode === 'play' && Play.game && !Play.setup;
   const op = mode === 'openings' && Openings.view === 'watch';
-  if (!ana && !play && !op) { nav.classList.add('hidden'); return; }
+  const fr = mode === 'free';
+  if (!ana && !play && !op && !fr) { nav.classList.add('hidden'); return; }
   nav.classList.remove('hidden');
-  const g = op ? Openings.game : ana ? Analysis.game : Play.game;
-  const ply = op ? Openings.ply : ana ? Analysis.ply : (Play.viewPly == null ? g.moves.length : Play.viewPly);
+  const g = fr ? Free.game : op ? Openings.game : ana ? Analysis.game : Play.game;
+  const ply = fr ? Free.ply : op ? Openings.ply : ana ? Analysis.ply : (Play.viewPly == null ? g.moves.length : Play.viewPly);
   const n = g.moves.length;
   let info = '<span class="muted">Startstellung</span>';
   if (ply > 0) {
     const m = g.moves[ply - 1];
     const num = new C.Position(g.startFen).full + Math.floor((ply - 1 + g.moves[0].side) / 2);
-    const c = op ? null : ana ? Analysis.cls[ply - 1] : (Play.showLive && Play.live.cls[ply - 1]);
+    const c = op || fr ? null : ana ? Analysis.cls[ply - 1] : (Play.showLive && Play.live.cls[ply - 1]);
     const dot = c ? `<span class="cls-dot" style="background:${CLS[c].color}">${CLS[c].sym}</span>` : '';
     info = `${dot}<b>${num}${m.side === 0 ? '.' : '…'} ${de(m.san)}</b>${c ? `<span class="muted nav-cls">${CLS[c].name}</span>` : ''}`;
   }
@@ -2377,7 +3061,7 @@ function renderBoardNav() {
     <div class="nav-info">${info}<span class="muted small">${ply}/${n}</span></div>
     <button class="btn" data-act="next" ${ply >= n ? 'disabled' : ''} title="Vor (→)">▶</button>
     <button class="btn" data-act="last" ${ply >= n ? 'disabled' : ''} title="Ende">⏭</button>`;
-  const go = op ? p => Openings.go(p) : ana ? p => Analysis.go(p) : p => Play.view(p);
+  const go = fr ? p => Free.go(p) : op ? p => Openings.go(p) : ana ? p => Analysis.go(p) : p => Play.view(p);
   bind(nav, { first: () => go(0), prev: () => go(ply - 1), next: () => go(ply + 1), last: () => go(1e9) });
 }
 
@@ -2405,7 +3089,7 @@ const Home = {
     const accs = games.filter(g => g.acc != null).slice(0, 10).map(g => g.acc);
     const avgAcc = accs.length ? (accs.reduce((a, b) => a + b, 0) / accs.length).toFixed(1) : '–';
     const beaten = beatenBots();
-    const nextBot = BOTS.findIndex((b, i) => !b.human && !beaten.has(i));
+    const nextBot = BOTS.findIndex((b, i) => b.ladder && !beaten.has(i));
     const cur = Play.game && !Play.over && Play.game.moves.length;
     const last = games[0];
     const hour = new Date().getHours();
@@ -2435,7 +3119,7 @@ const Home = {
       <div class="two-col">
         <div class="card"><div class="row"><div class="label">Bot-Leiter</div><span class="muted small">${beaten.size} von 10 besiegt</span></div>
           <p class="muted small">Besiege jeden Bot, um dich nach oben zu arbeiten.${nextBot >= 0 ? ` Nächstes Ziel: <b>${BOTS[nextBot].name}</b>.` : ' Alle besiegt – Respekt! 👑'}</p>
-          <div class="ladder">${BOTS.filter(b => !b.human).map((b, i) => `<div class="rung ${beaten.has(i) ? 'done' : i > nextBot && nextBot >= 0 ? 'locked' : ''}" data-act="bot" data-arg="${i}">
+          <div class="ladder">${BOTS.filter(b => b.ladder).map((b, i) => `<div class="rung ${beaten.has(i) ? 'done' : i > nextBot && nextBot >= 0 ? 'locked' : ''}" data-act="bot" data-arg="${i}">
             <span class="em">${beaten.has(i) ? '✅' : b.emoji}</span><b>${b.name}</b><div class="muted">${b.elo}</div></div>`).join('')}</div></div>
         <div class="card"><div class="label">Zugbewertungen</div><div style="height:10px"></div>
           <div class="legend">${CLS_ORDER.map(k => `<div><span class="cls-dot" style="background:${CLS[k].color}">${CLS[k].sym}</span>${CLS[k].name}</div>`).join('')}</div>
@@ -2468,15 +3152,17 @@ function gameItemHtml(g, i) {
 }
 
 let mode = 'home';
-const modes = { home: Home, learn: Learn, openings: Openings, play: Play, puzzle: Puzzles, analysis: Analysis };
+const modes = { home: Home, learn: Learn, openings: Openings, play: Play, puzzle: Puzzles, analysis: Analysis, free: Free, editor: Editor };
+const TAB_OF = { free: 'analysis', editor: 'analysis' };
 function switchTab(name) {
   mode = name;
   if (name !== 'learn') { document.body.classList.remove('learn-mode', 'lesson-mode', 'no-board'); }
   if (name !== 'openings') document.body.classList.remove('openings-mode');
   document.body.classList.toggle('home-mode', name === 'home');
-  document.querySelectorAll('.tabs button[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
-  for (const k of ['play', 'puzzle', 'analysis', 'openings']) $('panel-' + k).classList.toggle('hidden', k !== name);
+  document.querySelectorAll('.tabs button[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === (TAB_OF[name] || name)));
+  for (const k of ['play', 'puzzle', 'analysis', 'openings', 'free', 'editor']) $('panel-' + k).classList.toggle('hidden', k !== name);
   board.sel = -1;
+  board.editHandler = null;
   modes[name].activate();
   renderBoardNav();
   store.set('tab', name);
@@ -2517,8 +3203,10 @@ document.addEventListener('keydown', e => {
   if (!d) return;
   if (mode === 'analysis' && Analysis.game) { Analysis.go(Analysis.ply + d); e.preventDefault(); }
   if (mode === 'openings' && Openings.view === 'watch') { Openings.go(Openings.ply + d); e.preventDefault(); }
+  if (mode === 'free') { Free.go(Free.ply + d); e.preventDefault(); }
   if (mode === 'play' && Play.game) { Play.nav(d); e.preventDefault(); }
 });
 
 Play.init();
+setInterval(() => Play.clockTick(), 100);
 switchTab(store.get('tab', 'home'));

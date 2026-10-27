@@ -12,6 +12,8 @@ for (const u of LESSONS) for (const l of u.lessons) l.steps.forEach((st, i) => {
   let pos;
   try { pos = new C.Position(fen); } catch (x) { err(l.id, i, 'FEN ' + fen); return; }
   for (const sq of [...(st.marks || []), ...(st.stars || []), ...(st.arrows || []).flat()]) if (!/^[a-h][1-8]$/.test(sq)) err(l.id, i, 'Feld ' + sq);
+  // Seite, die nicht am Zug ist, darf nicht im Schach stehen (sonst illegale Stellung)
+  if (/K/.test(fen.split(' ')[0]) && /k/.test(fen.split(' ')[0]) && pos.attacked(pos.kingSq[pos.side ^ 1], pos.side)) err(l.id, i, 'illegal: Seite nicht am Zug steht im Schach');
   if (st.last) { const m = pos.fromUci(st.last); if (!m) { err(l.id, i, 'last illegal'); return; } pos.make(m); }
   const legal = pos.legalMoves();
   const has = test => legal.some(m => { pos.make(m); const r = test(); pos.unmake(); return r; });
