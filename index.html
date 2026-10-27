@@ -20,19 +20,22 @@
     <nav class="sidebar">
       <div class="brand"><span class="logo">♞</span><div>Schach-Trainer<small>OFFLINE · KOSTENLOS</small></div></div>
       <div class="tabs">
-        <button data-tab="home"><span class="ic">🏠</span>Übersicht</button>
+        <button data-tab="home"><span class="ic">🏠</span><span class="lf">Übersicht</span><span class="ls">Start</span></button>
         <button data-tab="learn"><span class="ic">🎓</span>Lernen</button>
+        <button data-tab="openings"><span class="ic">📖</span><span class="lf">Eröffnungen</span><span class="ls">Eröffn.</span></button>
         <button data-tab="play"><span class="ic">♟</span>Spielen</button>
         <button data-tab="puzzle"><span class="ic">🧩</span>Rätsel</button>
         <button data-tab="analysis"><span class="ic">📈</span>Analyse</button>
       </div>
       <div class="spacer"></div>
+      <button id="piecesBtn" class="side-btn" title="Figuren ändern">🎨 Figuren</button>
       <button id="soundBtn" class="side-btn" title="Ton an/aus">🔊 Ton an</button>
     </nav>
 
     <div class="content">
       <section id="home"></section>
       <section id="learn"></section>
+      <section id="openings"></section>
       <main class="layout">
         <section class="board-area">
           <div class="lesson-top" id="lessonTop"></div>
@@ -50,6 +53,7 @@
           <div id="panel-play" class="tabpanel"></div>
           <div id="panel-puzzle" class="tabpanel hidden"></div>
           <div id="panel-analysis" class="tabpanel hidden"></div>
+          <div id="panel-openings" class="tabpanel hidden"></div>
         </aside>
       </main>
     </div>
@@ -60,6 +64,7 @@
   <script src="engine.js"></script>
   <script src="puzzles.js"></script>
   <script src="lessons.js"></script>
+  <script src="openings.js"></script>
   <script src="app.js"></script>
   <script>
     if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js');

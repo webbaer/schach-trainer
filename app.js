@@ -238,7 +238,31 @@ const STATUS_TEXT = {
 
 // ---------- Brett ----------
 const GLYPH = { 1: '♟', 2: '♞', 3: '♝', 4: '♜', 5: '♛', 6: '♚' };
-const pieceHtml = p => `<span class="piece ${p >> 3 ? 'b' : 'w'}">${GLYPH[p & 7]}︎</span>`;
+// Figurensätze (SVG von lichess.org, freie Lizenzen – siehe pieces/LIZENZEN.md)
+const PIECE_SETS = [
+  { id: 'cburnett', name: 'Klassisch' }, { id: 'merida', name: 'Turnier' }, { id: 'chessnut', name: 'Modern' },
+  { id: 'fantasy', name: 'Fantasie' }, { id: 'celtic', name: 'Keltisch' }, { id: 'spatial', name: 'Kristall' },
+  { id: 'papercut', name: 'Papier' }, { id: 'rhosgfx', name: 'Holz' }, { id: 'kiwen-suwi', name: 'Minimal' },
+  { id: 'unicode', name: 'Schrift' }
+];
+let pieceSet = store.get('pieceSet', 'cburnett');
+if (!PIECE_SETS.some(s => s.id === pieceSet)) pieceSet = 'cburnett';
+const pieceSrc = (set, p) => `pieces/${set}/${p >> 3 ? 'b' : 'w'}${' PNBRQK'[p & 7]}.svg`;
+const pieceHtml = p => pieceSet === 'unicode'
+  ? `<span class="piece ${p >> 3 ? 'b' : 'w'}">${GLYPH[p & 7]}︎</span>`
+  : `<img class="piece piece-img" src="${pieceSrc(pieceSet, p)}" alt="" draggable="false">`;
+
+function openPieceChooser() {
+  const prev = s => s.id === 'unicode'
+    ? `<span class="pc-uni">${GLYPH[2]}︎</span><span class="pc-uni b">${GLYPH[5]}︎</span>`
+    : `<img src="${pieceSrc(s.id, 2)}" alt=""><img src="${pieceSrc(s.id, 13)}" alt="">`;
+  showModal(`<h2>🎨 Figuren</h2><div class="pc-grid">${PIECE_SETS.map(s => `<button class="pc ${s.id === pieceSet ? 'active' : ''}" data-act="pick" data-arg="${s.id}"><div class="pc-prev">${prev(s)}</div>${s.name}</button>`).join('')}</div>
+    <button class="btn primary full" data-act="close">Fertig</button>
+    <p class="muted small" style="margin-bottom:0">Figuren von lichess.org-Künstlern unter freien Lizenzen (GPL, MIT, Apache, CC) – Details in pieces/LIZENZEN.md.</p>`, {
+    pick: id => { pieceSet = id; store.set('pieceSet', id); board.render(); openPieceChooser(); },
+    close: () => { hideModal(); if (mode === 'home') Home.render(); }
+  });
+}
 
 class Board {
   constructor(wrap) {
@@ -801,11 +825,13 @@ const Play = {
         <div class="seg">${[['w', '♔ Weiß'], ['r', '🎲 Zufall'], ['b', '♚ Schwarz']].map(([k, l]) => `<button class="${this.colorChoice === k ? 'active' : ''}" data-act="color" data-arg="${k}">${l}</button>`).join('')}</div>
         <div style="height:16px"></div>
         <button class="btn primary full" data-act="start">▶ Spielen gegen ${this.bot.name}</button>
+        <button class="btn small" style="margin-top:8px" data-act="pieces">🎨 Figuren ändern</button>
         ${this.game && this.setup ? '<button class="btn full" style="margin-top:8px" data-act="back">Zurück zur laufenden Partie</button>' : ''}`;
       bind(p, {
         bot: i => { this.botIdx = +i; store.set('botIdx', this.botIdx); this.renderPanel(); if (!this.game) this.refresh(); },
         color: c => { this.colorChoice = c; store.set('colorChoice', c); this.renderPanel(); },
         start: () => { this.setup = false; this.start(); },
+        pieces: () => openPieceChooser(),
         back: () => { this.setup = false; this.renderPanel(); }
       });
       return;
@@ -1469,7 +1495,14 @@ function markActivity() {
 }
 
 // ---------- Modus: Lernpfad ----------
-const ALL_LESSONS = LESSONS.flatMap(u => u.lessons.map(l => ({ unit: u, lesson: l })));
+// Lektionen in Pfad-Reihenfolge; nach jedem Kapitel ein Wiederholungs-Knoten
+const ALL_LESSONS = LESSONS.flatMap((u, ui) => [
+  ...u.lessons.map(l => ({ unit: u, ui, lesson: l })),
+  { unit: u, ui, lesson: { id: 'rev-' + u.id, title: 'Wiederholung', icon: '🔁', review: true } }
+]);
+const shuffle = a => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+const TEST_TYPES = ['quiz', 'move', 'mate', 'check', 'line'];
+const unitSteps = (u, types) => u.lessons.flatMap(l => l.steps.filter(st => types.includes(st.t)));
 const PRAISE = ['Richtig!', 'Super!', 'Klasse!', 'Genau!', 'Perfekt!', 'Stark!', 'Sehr gut!'];
 const mdText = t => esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\n/g, '<br>');
 
@@ -1482,7 +1515,7 @@ const Learn = {
   nextIndex() { const k = ALL_LESSONS.findIndex(x => this.st.done[x.lesson.id] == null); return k < 0 ? null : k; },
 
   activate() {
-    if (this.lesson) { this.setMode('lesson'); this.renderStep(); }
+    if (this.lesson) { this.setMode('lesson'); this.draw(); this.renderBar(); }
     else { this.setMode('path'); this.renderPath(); }
   },
   setMode(m) {
@@ -1493,46 +1526,117 @@ const Learn = {
 
   // ----- Pfad-Übersicht -----
   renderPath() {
+    if (this.st.start == null && !Object.keys(this.st.done).length) { this.renderOnboarding(); return; }
     const act = getActivity();
-    const doneCount = Object.keys(this.st.done).length;
+    const doneCount = ALL_LESSONS.filter(x => !x.lesson.review && this.st.done[x.lesson.id] != null).length;
+    const total = ALL_LESSONS.filter(x => !x.lesson.review).length;
     const next = this.nextIndex();
-    let k = 0, html = `<div class="learn-head">
+    const canMix = doneCount > 0;
+    let html = `<div class="learn-head">
         <div><h1>Lernpfad</h1><p class="muted">Von null auf Schach – Schritt für Schritt.</p></div>
-        <div class="chips"><span class="chip">🔥 ${act.streak} ${act.streak === 1 ? 'Tag' : 'Tage'}</span><span class="chip">⚡ ${this.st.xp} XP</span><span class="chip">🎓 ${doneCount}/${ALL_LESSONS.length}</span></div>
+        <div class="chips"><span class="chip">🔥 ${act.streak} ${act.streak === 1 ? 'Tag' : 'Tage'}</span><span class="chip">⚡ ${this.st.xp} XP</span><span class="chip">🎓 ${doneCount}/${total}</span></div>
+      </div>
+      <div class="learn-actions">
+        <button class="btn primary" data-act="mix" ${canMix ? '' : 'disabled'}>🔁 Übungs-Mix</button>
+        <button class="btn" data-act="placement">🎯 Einstufungstest</button>
       </div>`;
-    LESSONS.forEach((u, ui) => {
-      const uDone = u.lessons.filter(l => this.st.done[l.id] != null).length;
-      html += `<div class="unit-banner u${ui % 8}"><div class="ub-ic">${u.icon}</div><div><div class="ub-k">Kapitel ${ui + 1}</div><b>${u.title}</b><div class="ub-d">${u.desc}</div></div>
-        <div class="ub-p">${uDone}/${u.lessons.length}</div></div><div class="path">`;
-      u.lessons.forEach((l, li) => {
-        const stars = this.st.done[l.id];
-        const unlocked = this.isUnlocked(k), current = k === next;
-        const cls = stars != null ? 'done' : current ? 'current' : unlocked ? 'open' : 'locked';
-        const x = Math.round(Math.sin((k + 1) * 1.1) * 70);
-        html += `<div class="node-wrap" style="transform:translateX(${x}px)">
-          ${current ? '<div class="go-bubble">LOS!</div>' : ''}
-          <button class="node ${cls} u${ui % 8}" data-act="open" data-arg="${k}" ${unlocked ? '' : 'disabled'}>${stars != null ? '✓' : unlocked ? l.icon : '🔒'}</button>
-          <div class="node-label">${l.title}</div>
-          ${stars != null ? `<div class="node-stars">${'★'.repeat(stars)}<span>${'★'.repeat(3 - stars)}</span></div>` : ''}
-        </div>`;
-        k++;
-      });
-      html += '</div>';
+    let lastUi = -1;
+    ALL_LESSONS.forEach((x, k) => {
+      const u = x.unit, ui = x.ui, l = x.lesson;
+      if (ui !== lastUi) {
+        if (lastUi >= 0) html += '</div>';
+        lastUi = ui;
+        const uDone = u.lessons.filter(q => this.st.done[q.id] != null).length;
+        const firstK = ALL_LESSONS.findIndex(q => q.ui === ui);
+        const canJump = !this.isUnlocked(firstK) && ui > 0;
+        html += `<div class="unit-banner u${ui % 8}"><div class="ub-ic">${u.icon}</div><div><div class="ub-k">Kapitel ${ui + 1}</div><b>${u.title}</b><div class="ub-d">${u.desc}</div></div>
+          ${canJump ? `<button class="ub-jump" data-act="jump" data-arg="${ui}">⏩ Springen</button>` : `<div class="ub-p">${uDone}/${u.lessons.length}</div>`}</div><div class="path">`;
+      }
+      const stars = this.st.done[l.id];
+      const unlocked = this.isUnlocked(k), current = k === next;
+      const cls = stars != null ? 'done' : current ? 'current' : unlocked ? 'open' : 'locked';
+      const xoff = Math.round(Math.sin((k + 1) * 1.1) * 70);
+      const icon = stars != null ? (l.review ? '🔁' : '✓') : unlocked ? l.icon : '🔒';
+      html += `<div class="node-wrap" style="transform:translateX(${xoff}px)">
+        ${current ? '<div class="go-bubble">LOS!</div>' : ''}
+        <button class="node ${cls} ${l.review ? 'review' : ''} u${ui % 8}" data-act="open" data-arg="${k}" ${unlocked ? '' : 'disabled'}>${icon}</button>
+        <div class="node-label">${l.title}</div>
+        ${stars ? `<div class="node-stars">${'★'.repeat(stars)}<span>${'★'.repeat(3 - stars)}</span></div>` : stars === 0 ? '<div class="node-stars skipped">übersprungen</div>' : ''}
+      </div>`;
     });
-    html += `<div class="path-end">${next == null ? '🏆 Du hast den ganzen Lernpfad geschafft! Weiter geht’s mit Rätseln und Partien gegen die Bots.' : '🏆 Am Ende wartet die Meisterprüfung.'}</div>`;
+    html += `</div><div class="path-end">${next == null ? '🏆 Du hast den ganzen Lernpfad geschafft! Halte dein Wissen mit dem Übungs-Mix frisch.' : '🏆 Am Ende wartet die Meisterprüfung.'}</div>`;
     $('learn').innerHTML = html;
-    bind($('learn'), { open: k => this.start(+k) });
+    bind($('learn'), {
+      open: k => this.start(+k),
+      mix: () => this.startMix(),
+      placement: () => { if (doneCount === 0 || confirm('Einstufungstest starten? Bestandene Kapitel werden freigeschaltet.')) this.startPlacement(); },
+      jump: ui => this.startJump(+ui)
+    });
     const cur = $('learn').querySelector('.node.current');
-    if (cur && this.scrollOnShow !== false) setTimeout(() => cur.scrollIntoView({ block: 'center', behavior: 'smooth' }), 50);
+    if (cur) setTimeout(() => cur.scrollIntoView({ block: 'center', behavior: 'smooth' }), 50);
+  },
+
+  renderOnboarding() {
+    $('learn').innerHTML = `<div class="onboard">
+      <div class="ob-logo">♞</div>
+      <h1>Willkommen beim Lernpfad!</h1>
+      <p class="muted">Wie viel kannst du schon? Wähle deinen Start.</p>
+      <button class="ob-card" data-act="begin"><div class="ob-ic">🌱</div><div><b>Von Anfang an</b><span>Ich lerne Schach neu – vom Brett über die Figuren bis zum Matt.</span></div></button>
+      <button class="ob-card" data-act="test"><div class="ob-ic">🎯</div><div><b>Einstufungstest</b><span>Ich kann schon etwas. Ein adaptiver Test findet heraus, wo ich einsteige – die Fragen werden schwerer, bis es knifflig wird.</span></div></button>
+    </div>`;
+    bind($('learn'), {
+      begin: () => { this.st.start = 'begin'; this.save(); this.renderPath(); },
+      test: () => this.startPlacement()
+    });
   },
 
   // ----- Lektion -----
   start(k) {
     const x = ALL_LESSONS[k];
     if (!x) return;
-    this.k = k; this.lesson = x.lesson; this.unit = x.unit; this.idx = 0; this.mistakes = 0;
+    let lesson = x.lesson;
+    if (lesson.review) {
+      // Wiederholung: gemischte Übungen aus dem Kapitel (ohne reine Erklärungen und lange Prüfungen)
+      const pool = shuffle(unitSteps(x.unit, ['quiz', 'collect', 'move', 'check', 'mate', 'line']));
+      lesson = Object.assign({}, lesson, { steps: pool.slice(0, 6) });
+    }
+    this.begin(Object.assign({ kind: lesson.review ? 'review' : 'lesson' }, lesson), k, x.unit);
+  },
+  begin(session, k, unit) {
+    this.k = k; this.lesson = session; this.unit = unit || null; this.idx = 0; this.mistakes = 0;
+    this.isTest = session.kind === 'placement' || session.kind === 'jump';
     this.setMode('lesson');
     this.startStep();
+  },
+  startMix() {
+    // Übungs-Mix: bevorzugt Lektionen mit wenigen Sternen
+    const pool = [];
+    for (const x of ALL_LESSONS) {
+      const s = this.st.done[x.lesson.id];
+      if (x.lesson.review || s == null) continue;
+      const w = s >= 3 ? 1 : 3;
+      for (const st of x.lesson.steps) if (['quiz', 'collect', 'move', 'check', 'mate', 'line'].includes(st.t)) for (let i = 0; i < w; i++) pool.push(st);
+    }
+    const steps = [];
+    for (const st of shuffle(pool)) { if (!steps.includes(st)) steps.push(st); if (steps.length >= 8) break; }
+    if (!steps.length) return;
+    this.begin({ kind: 'mix', id: 'mix', title: 'Übungs-Mix', icon: '🔁', steps }, null);
+  },
+  startPlacement() {
+    this.place = { ui: 0, asked: 0, passed: 0 };
+    this.begin({ kind: 'placement', id: 'placement', title: 'Einstufungstest', icon: '🎯', steps: this.placementSteps(0) }, null);
+  },
+  placementSteps(ui) { return shuffle(unitSteps(LESSONS[ui], TEST_TYPES)).slice(0, 2); },
+  startJump(ui) {
+    const before = LESSONS.slice(0, ui).filter(u => u.lessons.some(l => this.st.done[l.id] == null));
+    const pool = shuffle(before.flatMap(u => shuffle(unitSteps(u, TEST_TYPES)).slice(0, 3)));
+    const steps = pool.slice(0, Math.min(8, Math.max(4, pool.length)));
+    this.jumpUi = ui;
+    this.begin({ kind: 'jump', id: 'jump', title: 'Sprung zu Kapitel ' + (ui + 1), icon: '⏩', steps }, null);
+  },
+  markUnitsDone(uptoUi) {
+    for (const x of ALL_LESSONS) if (x.ui < uptoUi && this.st.done[x.lesson.id] == null) this.st.done[x.lesson.id] = 0;
+    this.save();
   },
   exit() {
     this.token++;
@@ -1547,7 +1651,7 @@ const Learn = {
     const st = this.step;
     this.token++;
     this.solved = st.t === 'info'; this.fb = null; this.locked = false; this.lastMove = null;
-    this.lineIdx = 0; this.userMoves = 0; this.history = []; this.wrongOpts = new Set(); this.hintUsed = false;
+    this.lineIdx = 0; this.userMoves = 0; this.history = []; this.wrongOpts = new Set(); this.hintUsed = false; this.stepFailed = false;
     const fen = lessonFen(st);
     this.startFen = fen;
     this.pos = fen ? this.makePos(fen, st.t === 'collect') : null;
@@ -1607,23 +1711,24 @@ const Learn = {
   renderBar() {
     const st = this.step, n = this.lesson.steps.length;
     $('lessonTop').innerHTML = `<button class="lt-close" data-act="close" title="Lektion verlassen">✕</button>
-      <div class="lt-prog"><div style="width:${Math.round(this.idx / n * 100)}%"></div></div>
+      <div class="lt-prog"><div style="width:${this.lesson.kind === 'placement' ? Math.round(this.place.ui / LESSONS.length * 100) : Math.round(this.idx / n * 100)}%"></div></div>
       <div class="lt-title">${this.lesson.icon} ${this.lesson.title}</div>`;
     bind($('lessonTop'), { close: () => { if (this.idx === 0 || confirm('Lektion verlassen? Dein Fortschritt in dieser Lektion geht verloren.')) this.exit(); } });
 
-    const typeLabel = { info: '📖 Lernen', quiz: '❓ Frage', collect: '⭐ Sammeln', move: '🎯 Finde den Zug', check: '⚡ Schach geben', mate: '👑 Matt in 1', any: '🛡️ Rette den König', line: '⚔️ Taktik', playmate: '🏆 Prüfung' }[st.t];
-    let html = `<div class="lb-type">${typeLabel}</div><div class="lb-text">${mdText(st.t === 'quiz' ? st.q : st.text)}</div>`;
+    const typeLabel = { info: '📖 Lernen', quiz: '❓ Frage', collect: '⭐ Sammeln', move: '🎯 Finde den Zug', check: '⚡ Schach geben', mate: '👑 Matt in 1', any: '🛡️ Rette den König', line: '⚔️ Taktik', playmate: '🏆 Prüfung', promote: '👑 Umwandeln' }[st.t];
+    const testInfo = this.lesson.kind === 'placement' ? ` · Kapitel ${this.place.ui + 1}: ${LESSONS[this.place.ui].title}` : this.isTest ? ` · Frage ${this.idx + 1}/${n}` : '';
+    let html = `<div class="lb-type">${typeLabel}${testInfo}</div><div class="lb-text">${mdText(st.t === 'quiz' ? st.q : st.text)}</div>`;
     if (st.t === 'quiz') {
       html += `<div class="lb-opts">${st.opts.map((o, i) => {
         const c = this.solved && i === st.a ? 'right' : this.wrongOpts.has(i) ? 'wrong' : '';
         return `<button class="opt ${c}" data-act="opt" data-arg="${i}" ${this.solved || this.wrongOpts.has(i) ? 'disabled' : ''}>${esc(o)}</button>`;
       }).join('')}</div>`;
     }
-    if (st.t === 'playmate') html += `<div class="lb-count">Zug ${this.userMoves} von ${st.max}</div>`;
+    if (st.t === 'playmate' || st.t === 'promote') html += `<div class="lb-count">Zug ${this.userMoves} von ${st.max}</div>`;
     if (this.fb) html += `<div class="lb-fb ${this.fb.ok ? 'ok' : 'bad'}"><b>${this.fb.title}</b>${this.fb.text ? ' ' + mdText(this.fb.text) : ''}</div>`;
-    if (this.solved) html += `<button class="btn primary full lb-next" data-act="next">${this.idx + 1 >= n ? 'Lektion abschließen' : 'Weiter'}</button>`;
+    if (this.solved) html += `<button class="btn primary full lb-next" data-act="next">${this.idx + 1 >= n && this.lesson.kind !== 'placement' ? 'Abschließen' : 'Weiter'}</button>`;
     else if (this.fb && !this.fb.ok && this.fb.retry) html += `<button class="btn full" data-act="retry">↻ Nochmal versuchen</button>`;
-    else if (['move', 'line', 'mate', 'check'].includes(st.t)) html += `<button class="btn small lb-skip" data-act="hint">💡 Tipp</button>`;
+    else if (!this.isTest && ['move', 'line', 'mate', 'check'].includes(st.t)) html += `<button class="btn small lb-skip" data-act="hint">💡 Tipp</button>`;
     $('lessonBar').innerHTML = html;
     bind($('lessonBar'), {
       opt: i => this.answer(+i),
@@ -1638,6 +1743,7 @@ const Learn = {
   answer(i) {
     const st = this.step;
     if (i === st.a) { this.solved = true; this.fb = { ok: true, title: this.praise(), text: st.why }; Sound.play('good'); }
+    else if (this.isTest) { this.wrongOpts.add(i); this.mistakes++; this.stepFailed = true; this.solved = true; this.fb = { ok: false, title: 'Leider falsch.', text: 'Richtig wäre: **' + st.opts[st.a] + '**. ' + (st.why || '') }; Sound.play('bad'); }
     else { this.wrongOpts.add(i); this.mistakes++; this.fb = { ok: false, title: 'Leider falsch.', text: 'Versuch es nochmal!' }; Sound.play('bad'); }
     this.renderBar();
   },
@@ -1675,6 +1781,13 @@ const Learn = {
 
   wrong(text, undo) {
     this.mistakes++;
+    if (this.isTest) {
+      this.stepFailed = true; this.solved = true;
+      this.fb = { ok: false, title: 'Leider falsch.', text: text };
+      Sound.play('bad');
+      this.draw(); this.renderBar();
+      return;
+    }
     this.fb = { ok: false, title: 'Nicht ganz.', text };
     Sound.play('bad');
     this.locked = true;
@@ -1758,6 +1871,13 @@ const Learn = {
           }, 650);
         } else this.wrong('Das ist nicht der stärkste Zug. Schau, welche Figuren auf einer Linie stehen!', true);
         break;
+      case 'promote':
+        this.userMoves++;
+        if (uci.length === 5) { this.success('Umgewandelt – eine neue Dame! 👑'); return; }
+        if (status) { this.failPlay('Die Partie ist remis – der Bauer kommt nicht mehr durch.'); return; }
+        if (this.userMoves >= st.max) { this.failPlay(`${st.max} Züge sind um. Der König muss dem Bauern den Weg bahnen!`); return; }
+        this.engineReply();
+        break;
       case 'playmate':
         this.userMoves++;
         if (status === 'checkmate') { this.success(`Schachmatt in ${this.userMoves} Zügen! 🏆`); return; }
@@ -1791,29 +1911,74 @@ const Learn = {
     this.history.push(r.move);
     Sound.forMove({ capture: cap, san }, this.pos);
     const st = this.pos.status();
-    if (st) { this.failPlay(st === 'insufficient' ? 'Deine Figur wurde geschlagen – jetzt kann niemand mehr gewinnen.' : 'Die Partie ist remis.'); return; }
+    if (st) { this.failPlay(st === 'insufficient' ? (this.step.t === 'promote' ? 'Der Bauer wurde geschlagen – jetzt ist es remis.' : 'Deine Figur wurde geschlagen – jetzt kann niemand mehr gewinnen.') : 'Die Partie ist remis.'); return; }
     this.locked = false;
     this.draw(true); this.renderBar();
   },
 
   next() {
+    if (this.lesson.kind === 'placement') {
+      // Adaptiv: zwei richtige Antworten pro Kapitel → nächstes (schwereres) Kapitel, ein Fehler → Ende
+      const P = this.place;
+      if (this.stepFailed) { this.finishPlacement(); return; }
+      P.asked++;
+      if (P.asked >= 2) {
+        P.passed = P.ui + 1; P.ui++; P.asked = 0;
+        if (P.ui >= LESSONS.length) { this.finishPlacement(); return; }
+        this.lesson.steps.push(...this.placementSteps(P.ui));
+      }
+      this.idx++; this.startStep(); return;
+    }
+    if (this.lesson.kind === 'jump' && this.mistakes > 1) { this.finishJump(false); return; }
     if (this.idx + 1 < this.lesson.steps.length) { this.idx++; this.startStep(); return; }
+    if (this.lesson.kind === 'jump') { this.finishJump(true); return; }
     this.finish();
+  },
+
+  finishPlacement() {
+    const passed = this.place.passed;
+    this.st.start = 'placed';
+    this.markUnitsDone(passed);
+    markActivity();
+    Sound.play(passed ? 'end' : 'good');
+    const u = LESSONS[Math.min(passed, LESSONS.length - 1)];
+    showModal(`<div style="font-size:54px">🎯</div><h2>Einstufung fertig!</h2>
+      <p>${passed === 0 ? 'Du startest ganz am Anfang – perfekt, um alles sauber zu lernen.' : passed >= LESSONS.length ? 'Wow – du hast alle Kapitel bestanden! Der Übungs-Mix hält dich fit.' : `Du hast <b>${passed} ${passed === 1 ? 'Kapitel' : 'Kapitel'}</b> übersprungen und startest bei<br><b>Kapitel ${passed + 1}: ${u.title}</b>.`}</p>
+      <button class="btn primary full" data-act="ok">Zum Lernpfad</button>`, { ok: () => { hideModal(); this.exit(); } });
+  },
+
+  finishJump(ok) {
+    const ui = this.jumpUi;
+    if (ok) { this.markUnitsDone(ui); markActivity(); }
+    Sound.play(ok ? 'end' : 'bad');
+    showModal(`<div style="font-size:54px">${ok ? '⏩' : '💪'}</div><h2>${ok ? 'Sprung geschafft!' : 'Noch nicht ganz'}</h2>
+      <p class="muted">${ok ? `Kapitel ${ui + 1} „${LESSONS[ui].title}“ ist freigeschaltet.` : 'Zu viele Fehler – arbeite dich lieber Schritt für Schritt dorthin vor. Du schaffst das!'}</p>
+      <button class="btn primary full" data-act="ok">Zum Lernpfad</button>`, { ok: () => { hideModal(); this.exit(); } });
   },
 
   finish() {
     const stars = this.mistakes === 0 ? 3 : this.mistakes <= 2 ? 2 : 1;
-    const first = this.st.done[this.lesson.id] == null;
+    if (this.lesson.kind === 'mix') {
+      const xp = 5 + stars * 5;
+      this.st.xp += xp; this.save(); markActivity(); Sound.play('end');
+      showModal(`<div class="finish-stars">${[0, 1, 2].map(i => `<span class="${i < stars ? 'on' : ''}" style="animation-delay:${i * .15}s">★</span>`).join('')}</div>
+        <h2>Übungs-Mix geschafft!</h2><p class="muted">${this.mistakes === 0 ? 'fehlerfrei 🎯' : this.mistakes + ' Fehler'} · Wiederholung festigt das Wissen.</p>
+        <div class="xp-gain">+${xp} XP</div>
+        <button class="btn primary full" data-act="again">Noch ein Mix</button>
+        <button class="btn full" data-act="path">Zum Lernpfad</button>`, { again: () => { hideModal(); this.startMix(); }, path: () => { hideModal(); this.exit(); } });
+      return;
+    }
+    const first = !this.st.done[this.lesson.id];
     const xp = (first ? 10 : 5) + stars * 5;
     this.st.done[this.lesson.id] = Math.max(stars, this.st.done[this.lesson.id] || 0);
     this.st.xp += xp;
     this.save();
     markActivity();
     Sound.play('end');
-    const unitDone = this.unit.lessons.every(l => this.st.done[l.id] != null);
+    const unitDone = ALL_LESSONS.filter(x => x.unit === this.unit).every(x => this.st.done[x.lesson.id] != null);
     const nextK = this.k + 1 < ALL_LESSONS.length ? this.k + 1 : null;
     showModal(`<div class="finish-stars">${[0, 1, 2].map(i => `<span class="${i < stars ? 'on' : ''}" style="animation-delay:${i * .15}s">★</span>`).join('')}</div>
-      <h2>${unitDone && first ? 'Kapitel geschafft! 🏆' : 'Lektion geschafft!'}</h2>
+      <h2>${unitDone && first ? 'Kapitel geschafft! 🏆' : this.lesson.review ? 'Wiederholung geschafft!' : 'Lektion geschafft!'}</h2>
       <p class="muted">${this.lesson.title} · ${this.mistakes === 0 ? 'fehlerfrei 🎯' : this.mistakes + (this.mistakes === 1 ? ' Fehler' : ' Fehler')}</p>
       <div class="xp-gain">+${xp} XP</div>
       ${nextK != null ? `<button class="btn primary full" data-act="cont">Nächste Lektion: ${ALL_LESSONS[nextK].lesson.title}</button>` : ''}
@@ -1824,20 +1989,267 @@ const Learn = {
   }
 };
 
+// ---------- Modus: Eröffnungen ----------
+const OPEN_LINES = OPENINGS.flatMap(o => o.lines.map(l => ({ o, l })));
+const DAY = 86400000;
+const INTERVALS = [1, 3, 7, 14, 30];
+
+const Openings = {
+  st: Object.assign({ lines: {}, group: 'all', color: 'all' }, store.get('openings', {})),
+  view: 'list', op: null, line: null, game: null, ply: 0, queue: null, token: 0,
+
+  save() { store.set('openings', this.st); },
+  lineStat(id) { return this.st.lines[id] || { reps: 0, streak: 0, due: 0 }; },
+  isLearned(id) { return this.lineStat(id).streak >= 2; },
+  dueLines() { const now = Date.now(); return OPEN_LINES.filter(x => { const s = this.st.lines[x.l.id]; return s && s.reps > 0 && s.due <= now; }); },
+  recommendedGroup() {
+    const r = Puzzles.st.rating;
+    return OPENING_GROUPS.find(g => r >= g.min && r < g.max) || OPENING_GROUPS[0];
+  },
+
+  activate() {
+    document.body.classList.toggle('openings-mode', this.view === 'list');
+    resize();
+    if (this.view === 'list') this.renderList();
+    else { board.setFlipped(this.op.side === 'b'); this.refresh(); this.renderPanel(); }
+  },
+  showList() {
+    this.token++; this.view = 'list'; this.queue = null;
+    this.activate();
+  },
+
+  // ----- Übersicht -----
+  renderList() {
+    const due = this.dueLines().length, rec = this.recommendedGroup();
+    const learnedTotal = OPEN_LINES.filter(x => this.isLearned(x.l.id)).length;
+    let html = `<div class="learn-head"><div><h1>Eröffnungen</h1><p class="muted">Lerne Repertoire-Linien Zug für Zug – mit Wiederholungen in wachsenden Abständen.</p></div>
+      <div class="chips"><span class="chip">📚 ${learnedTotal}/${OPEN_LINES.length} Linien gelernt</span></div></div>
+      ${due ? `<button class="due-banner" data-act="due"><span>🔁</span><div><b>${due} ${due === 1 ? 'Linie ist' : 'Linien sind'} zur Wiederholung fällig</b><div class="muted small">Kurz durchspielen, damit sie im Kopf bleiben</div></div><span>›</span></button>` : ''}
+      <div class="op-filters">
+        <div class="seg">${[['all', 'Alle'], ...OPENING_GROUPS.map(g => [g.id, g.icon + ' ' + g.name])].map(([v, l]) => `<button class="${this.st.group === v ? 'active' : ''}" data-act="group" data-arg="${v}">${l}</button>`).join('')}</div>
+        <div class="seg">${[['all', 'Beide Farben'], ['w', '♔ Als Weiß'], ['b', '♚ Als Schwarz']].map(([v, l]) => `<button class="${this.st.color === v ? 'active' : ''}" data-act="color" data-arg="${v}">${l}</button>`).join('')}</div>
+      </div>`;
+    for (const g of OPENING_GROUPS) {
+      if (this.st.group !== 'all' && this.st.group !== g.id) continue;
+      const ops = OPENINGS.filter(o => o.group === g.id && (this.st.color === 'all' || o.side === this.st.color));
+      if (!ops.length) continue;
+      html += `<div class="op-group"><div class="og-head"><span class="og-ic">${g.icon}</span><div><b>${g.name}</b> <span class="muted">· ${g.range}</span>${g.id === rec.id ? ' <span class="pill rec">⭐ Empfohlen für dich</span>' : ''}<div class="muted small">${g.why}</div></div></div>
+        <div class="op-grid">${ops.map(o => {
+          const learned = o.lines.filter(l => this.isLearned(l.id)).length;
+          const started = o.lines.filter(l => this.lineStat(l.id).reps > 0).length;
+          return `<button class="op-card" data-act="open" data-arg="${o.id}">
+            <div class="row"><span class="op-side ${o.side}">${o.side === 'w' ? '♔ Weiß' : '♚ Schwarz'}</span><span class="muted small">${o.eco}</span></div>
+            <b>${o.name}</b><div class="muted small op-why">${o.why}</div>
+            <div class="op-prog"><div style="width:${learned / o.lines.length * 100}%"></div></div>
+            <div class="muted small">${learned}/${o.lines.length} gelernt${started > learned ? ` · ${started - learned} in Arbeit` : ''}</div></button>`;
+        }).join('')}</div></div>`;
+    }
+    html += `<p class="muted small" style="margin-top:20px">Die Elo-Einordnung ist eine Trainer-Empfehlung: Sie richtet sich danach, wie viel Theorie eine Eröffnung braucht und wie klar ihre Pläne sind – keine Gewinnstatistik.</p>`;
+    $('openings').innerHTML = html;
+    bind($('openings'), {
+      group: v => { this.st.group = v; this.save(); this.renderList(); },
+      color: v => { this.st.color = v; this.save(); this.renderList(); },
+      open: id => this.openOpening(id),
+      due: () => this.startQueue(this.dueLines())
+    });
+  },
+
+  openOpening(id) {
+    this.op = OPENINGS.find(o => o.id === id);
+    this.view = 'detail'; this.line = null; this.queue = null;
+    this.game = new Game();
+    this.activate();
+  },
+
+  // Linie in Züge (UCI + Kommentar) übersetzen
+  prepLine(l) {
+    if (l._moves) return l._moves;
+    const p = new C.Position(), out = [];
+    for (const x of parseOpeningLine(l.moves)) {
+      const m = p.fromSan(x.san);
+      if (!m) break;
+      out.push({ uci: p.toUci(m), comment: x.comment });
+      p.make(m);
+    }
+    l._moves = out;
+    return out;
+  },
+  mySide() { return this.op.side === 'w' ? 0 : 1; },
+
+  // ----- Ansehen -----
+  watch(lineId) {
+    this.line = this.op.lines.find(l => l.id === lineId);
+    const mv = this.prepLine(this.line);
+    this.game = new Game();
+    for (const x of mv) this.game.play(x.uci);
+    this.view = 'watch'; this.ply = 0;
+    this.activate();
+  },
+  go(ply) { this.ply = Math.max(0, Math.min(this.game.moves.length, ply)); this.refresh(); this.renderPanel(); },
+
+  // ----- Üben -----
+  drill(lineId) {
+    this.line = this.op.lines.find(l => l.id === lineId);
+    this.prepLine(this.line);
+    this.token++;
+    this.game = new Game();
+    this.view = 'drill'; this.mistakes = 0; this.wrongTries = 0; this.fb = null; this.done = false; this.hintArrow = null; this.locked = false;
+    this.activate();
+    if (this.mySide() === 1) this.autoReply();
+  },
+  startQueue(list) {
+    if (!list.length) return;
+    this.queue = shuffle(list.map(x => ({ op: x.o.id, line: x.l.id })));
+    this.nextInQueue();
+  },
+  nextInQueue() {
+    const q = this.queue.shift();
+    if (!q) { this.showList(); return; }
+    this.op = OPENINGS.find(o => o.id === q.op);
+    this.drill(q.line);
+  },
+  expected() { return this.line._moves[this.game.moves.length]; },
+
+  onUserMove(uci) {
+    if (this.view !== 'drill' || this.done || this.locked) return;
+    const exp = this.expected();
+    if (!exp) return;
+    if (uci === exp.uci) {
+      const rec = this.game.play(uci);
+      Sound.forMove(rec, this.game.pos);
+      this.wrongTries = 0; this.hintArrow = null;
+      this.fb = { ok: true, text: exp.comment || 'Richtig!' };
+      if (this.game.moves.length >= this.line._moves.length) { this.complete(); return; }
+      this.refresh(true); this.renderPanel();
+      this.autoReply();
+    } else {
+      this.mistakes++; this.wrongTries++;
+      Sound.play('bad');
+      const san = de(this.game.pos.toSan(this.game.pos.fromUci(uci)));
+      this.fb = { ok: false, text: `${san} gehört nicht zu dieser Linie.${this.wrongTries >= 2 ? ' Der Pfeil zeigt dir den Repertoire-Zug.' : ' Versuch es nochmal!'}` };
+      if (this.wrongTries >= 2) this.hintArrow = exp.uci;
+      this.refresh(); this.renderPanel();
+    }
+  },
+  async autoReply() {
+    const exp = this.expected();
+    if (!exp) return;
+    this.locked = true;
+    this.refresh(); this.renderPanel();
+    const tok = this.token;
+    await sleep(550);
+    if (tok !== this.token) return;
+    const rec = this.game.play(exp.uci);
+    Sound.forMove(rec, this.game.pos);
+    this.locked = false;
+    if (exp.comment && (!this.fb || this.fb.ok)) this.fb = { ok: true, text: exp.comment };
+    if (this.game.moves.length >= this.line._moves.length) { this.complete(); return; }
+    this.refresh(true); this.renderPanel();
+  },
+  hint() {
+    const exp = this.expected();
+    if (!exp || this.done) return;
+    this.mistakes++;
+    this.hintArrow = exp.uci;
+    this.refresh(); this.renderPanel();
+  },
+  complete() {
+    this.done = true;
+    const s = Object.assign({ reps: 0, streak: 0, due: 0 }, this.st.lines[this.line.id]);
+    s.reps++;
+    if (this.mistakes === 0) { s.streak++; s.due = Date.now() + INTERVALS[Math.min(s.streak - 1, INTERVALS.length - 1)] * DAY; }
+    else { s.streak = 0; s.due = Date.now() + DAY / 2; }
+    s.last = Date.now();
+    this.st.lines[this.line.id] = s;
+    this.save();
+    markActivity();
+    Sound.play(this.mistakes === 0 ? 'good' : 'move');
+    this.refresh(true); this.renderPanel();
+  },
+
+  refresh(animate) {
+    if (mode !== 'openings' || this.view === 'list') return;
+    const g = this.game;
+    const ply = this.view === 'watch' ? this.ply : g.moves.length;
+    const pos = this.view === 'watch' ? g.positionAt(ply) : g.pos;
+    const lm = g.moves[ply - 1];
+    const arrows = [];
+    if (this.view === 'watch' && g.moves[ply]) arrows.push({ from: g.moves[ply].from, to: g.moves[ply].to, color: 'rgba(124,196,127,.8)' });
+    if (this.view === 'drill' && this.hintArrow) arrows.push({ from: C.parseSq(this.hintArrow.slice(0, 2)), to: C.parseSq(this.hintArrow.slice(2, 4)), color: 'rgba(80,160,255,.85)' });
+    board.movable = this.view === 'drill' && !this.done && !this.locked && g.pos.side === this.mySide() ? this.mySide() : -1;
+    board.set(pos, { last: lm ? [lm.from, lm.to] : null, arrows, animate: animate && lm ? [lm.from, lm.to] : null });
+    EvalBar.show(false);
+    setStrip('top', null); setStrip('bottom', null);
+    renderBoardNav();
+  },
+
+  renderPanel() {
+    const p = $('panel-openings'), o = this.op;
+    if (!o) return;
+    const g = OPENING_GROUPS.find(x => x.id === o.group);
+    const head = `<div class="panel-head"><button class="btn small" data-act="back">←</button><div><h2>${o.name}</h2><div class="muted">${o.side === 'w' ? '♔ als Weiß' : '♚ als Schwarz'} · ${o.eco} · ${g.icon} ${g.range}</div></div></div>`;
+    let html = head;
+    if (this.view === 'detail') {
+      html += `<div class="status-box"><b>Warum diese Eröffnung?</b><div class="small" style="margin-top:4px">${o.why}</div></div>
+        <div class="status-box"><b>Die Idee</b><div class="small" style="margin-top:4px">${o.idea}</div></div>
+        <h3>Linien</h3>${o.lines.map(l => {
+          const s = this.lineStat(l.id), now = Date.now();
+          const badge = s.reps === 0 ? '<span class="pill">Neu</span>' : s.due <= now ? '<span class="pill due">🔁 fällig</span>' : this.isLearned(l.id) ? '<span class="pill ok">✓ gelernt</span>' : `<span class="pill">${'★'.repeat(Math.min(s.streak, 3))}${'☆'.repeat(Math.max(0, 2 - s.streak))} lernen</span>`;
+          return `<div class="line-item"><div><b>${l.name}</b> ${badge}<div class="muted small">${this.prepLine(l).length} Halbzüge${s.due > now && s.reps ? ' · wieder fällig in ' + Math.max(1, Math.round((s.due - now) / DAY)) + ' T.' : ''}</div></div>
+            <div class="li-btns"><button class="btn small" data-act="watch" data-arg="${l.id}">▶ Ansehen</button><button class="btn small primary-s" data-act="drill" data-arg="${l.id}">🎯 Üben</button></div></div>`;
+        }).join('')}
+        <div style="height:8px"></div><button class="btn primary full" data-act="all">🎯 Alle Linien üben</button>`;
+    } else if (this.view === 'watch') {
+      const mv = this.line._moves, c = this.ply > 0 ? mv[this.ply - 1].comment : '';
+      html += `<h3>${this.line.name}</h3>
+        <div class="explain">${this.ply === 0 ? 'Startstellung – blättere mit ▶ durch die Züge. Der grüne Pfeil zeigt den nächsten Zug.' : `<b>${de(this.game.moves[this.ply - 1].san)}</b>${c ? ' – ' + esc(c) : ''}`}</div>
+        <div class="movelist" id="opMoves"></div>
+        <button class="btn primary full" data-act="drill" data-arg="${this.line.id}">🎯 Jetzt üben</button>`;
+    } else {
+      const total = this.line._moves.length, mine = this.line._moves.filter((x, i) => (i % 2) === this.mySide()).length;
+      const doneMine = this.game.moves.filter(m => m.side === this.mySide()).length;
+      html += `<h3>${this.queue ? '🔁 Wiederholung · ' : ''}${this.line.name}</h3>
+        <div class="progress"><div style="width:${this.game.moves.length / total * 100}%"></div></div>
+        <div class="muted small">Dein Zug ${Math.min(doneMine + (this.done ? 0 : 1), mine)} von ${mine}</div>
+        ${this.done ? `<div class="status-box ${this.mistakes === 0 ? 'good' : ''}"><b>${this.mistakes === 0 ? '🎉 Perfekt gespielt!' : '✓ Linie geschafft'}</b><div class="small">${this.mistakes === 0 ? 'Nächste Wiederholung in ' + INTERVALS[Math.min(this.lineStat(this.line.id).streak - 1, INTERVALS.length - 1)] + ' Tag(en).' : this.mistakes + ' Fehler – die Linie kommt bald nochmal dran.'}</div></div>`
+        : `<div class="status-box ${this.fb ? (this.fb.ok ? 'good' : 'bad') : ''}">${this.fb ? esc(this.fb.text) : (this.locked ? 'Gegner zieht …' : `Spiele den Repertoire-Zug für ${this.mySide() === 0 ? 'Weiß' : 'Schwarz'}!`)}</div>`}
+        <div class="movelist" id="opMoves"></div>
+        ${this.done ? (this.queue && this.queue.length ? `<button class="btn primary full" data-act="nextq">Weiter (${this.queue.length} übrig)</button>` : `<button class="btn primary full" data-act="drill" data-arg="${this.line.id}">↻ Nochmal üben</button>`)
+        : `<div class="btn-row"><button class="btn" data-act="hint">💡 Tipp</button><button class="btn" data-act="drill" data-arg="${this.line.id}">↻ Neu starten</button></div>`}
+        <div style="height:6px"></div><button class="btn full" data-act="${this.queue ? 'list' : 'detail'}">${this.queue ? 'Wiederholung beenden' : 'Zur Eröffnung'}</button>`;
+    }
+    p.innerHTML = html;
+    bind(p, {
+      back: () => this.view === 'detail' || this.queue ? this.showList() : (this.view = 'detail', this.activate()),
+      watch: id => this.watch(id), drill: id => this.drill(id),
+      all: () => this.startQueue(o.lines.map(l => ({ o, l }))),
+      hint: () => this.hint(), nextq: () => this.nextInQueue(),
+      detail: () => { this.token++; this.view = 'detail'; this.activate(); }, list: () => this.showList()
+    });
+    const box = $('opMoves');
+    if (box) {
+      box.innerHTML = moveListHtml(this.game, this.view === 'watch' ? this.ply : this.game.moves.length, null);
+      if (this.view === 'watch') box.querySelectorAll('[data-ply]').forEach(e => e.onclick = () => this.go(+e.dataset.ply));
+      scrollListTo(box, box.querySelector('.cur'));
+    }
+  }
+};
+
 // ---------- Steuerleiste unter dem Brett ----------
 function renderBoardNav() {
   const nav = $('boardNav');
   const ana = mode === 'analysis' && Analysis.game, play = mode === 'play' && Play.game && !Play.setup;
-  if (!ana && !play) { nav.classList.add('hidden'); return; }
+  const op = mode === 'openings' && Openings.view === 'watch';
+  if (!ana && !play && !op) { nav.classList.add('hidden'); return; }
   nav.classList.remove('hidden');
-  const g = ana ? Analysis.game : Play.game;
-  const ply = ana ? Analysis.ply : (Play.viewPly == null ? g.moves.length : Play.viewPly);
+  const g = op ? Openings.game : ana ? Analysis.game : Play.game;
+  const ply = op ? Openings.ply : ana ? Analysis.ply : (Play.viewPly == null ? g.moves.length : Play.viewPly);
   const n = g.moves.length;
   let info = '<span class="muted">Startstellung</span>';
   if (ply > 0) {
     const m = g.moves[ply - 1];
     const num = new C.Position(g.startFen).full + Math.floor((ply - 1 + g.moves[0].side) / 2);
-    const c = ana ? Analysis.cls[ply - 1] : (Play.showLive && Play.live.cls[ply - 1]);
+    const c = op ? null : ana ? Analysis.cls[ply - 1] : (Play.showLive && Play.live.cls[ply - 1]);
     const dot = c ? `<span class="cls-dot" style="background:${CLS[c].color}">${CLS[c].sym}</span>` : '';
     info = `${dot}<b>${num}${m.side === 0 ? '.' : '…'} ${de(m.san)}</b>${c ? `<span class="muted nav-cls">${CLS[c].name}</span>` : ''}`;
   }
@@ -1847,7 +2259,7 @@ function renderBoardNav() {
     <div class="nav-info">${info}<span class="muted small">${ply}/${n}</span></div>
     <button class="btn" data-act="next" ${ply >= n ? 'disabled' : ''} title="Vor (→)">▶</button>
     <button class="btn" data-act="last" ${ply >= n ? 'disabled' : ''} title="Ende">⏭</button>`;
-  const go = ana ? p => Analysis.go(p) : p => Play.view(p);
+  const go = op ? p => Openings.go(p) : ana ? p => Analysis.go(p) : p => Play.view(p);
   bind(nav, { first: () => go(0), prev: () => go(ply - 1), next: () => go(ply + 1), last: () => go(1e9) });
 }
 
@@ -1881,11 +2293,12 @@ const Home = {
     const hour = new Date().getHours();
     const greet = hour < 11 ? 'Guten Morgen' : hour < 18 ? 'Hallo' : 'Guten Abend';
     $('home').innerHTML = `
-      <div class="hero"><h1>${greet}! ♞</h1><p>Spiele gegen Bots, löse Rätsel und lerne aus deinen Fehlern – komplett offline.</p></div>
+      <div class="hero"><div class="hero-btns"><button data-act="pieces">🎨</button><button class="hero-sound" data-act="sound">${Sound.on ? '🔊' : '🔇'}</button></div><h1>${greet}! ♞</h1><p>Spiele gegen Bots, löse Rätsel und lerne aus deinen Fehlern – komplett offline.</p></div>
       <div class="actions">
         ${cur ? `<button class="action main" data-act="resume"><div class="ai">▶</div><div><b>Partie fortsetzen</b><span>gegen ${Play.bot.name} · Zug ${Math.ceil(Play.game.moves.length / 2)}</span></div></button>`
         : `<button class="action main" data-act="play"><div class="ai">${BOTS[Play.botIdx].emoji}</div><div><b>Spielen</b><span>gegen ${BOTS[Play.botIdx].name} (ca. ${BOTS[Play.botIdx].elo})</span></div></button>`}
-        ${(() => { const nk = Learn.nextIndex(); return `<button class="action" data-act="learn"><div class="ai">🎓</div><div><b>Lernpfad</b><span>${nk == null ? 'Alles geschafft! Wiederhole Lektionen' : 'Weiter mit: ' + ALL_LESSONS[nk].lesson.title} · ${Object.keys(Learn.st.done).length}/${ALL_LESSONS.length}</span></div></button>`; })()}
+        ${(() => { const nk = Learn.nextIndex(); return `<button class="action" data-act="learn"><div class="ai">🎓</div><div><b>Lernpfad</b><span>${nk == null ? 'Alles geschafft! Übe mit dem Mix' : 'Weiter mit: ' + ALL_LESSONS[nk].lesson.title} · ${ALL_LESSONS.filter(x => !x.lesson.review && Learn.st.done[x.lesson.id] != null).length}/${ALL_LESSONS.filter(x => !x.lesson.review).length}</span></div></button>`; })()}
+        ${(() => { const d = Openings.dueLines().length; return `<button class="action" data-act="openings"><div class="ai">📖</div><div><b>Eröffnungen</b><span>${d ? `🔁 ${d} Linie${d === 1 ? '' : 'n'} fällig` : OPENINGS.length + ' Eröffnungen nach Elo sortiert'}</span></div></button>`; })()}
         <button class="action" data-act="puzzle"><div class="ai">🧩</div><div><b>Rätsel lösen</b><span>Deine Wertung: ${Math.round(ps.rating)} · Serie 🔥${ps.streak}</span></div></button>
         <button class="action" data-act="analyse" ${last ? '' : 'disabled'}><div class="ai">📈</div><div><b>Letzte Partie analysieren</b><span>${last ? `${esc(last.white)} – ${esc(last.black)}` : 'Noch keine Partie gespielt'}</span></div></button>
       </div>
@@ -1916,6 +2329,9 @@ const Home = {
       play: () => { Play.setup = true; switchTab('play'); },
       puzzle: () => switchTab('puzzle'),
       learn: () => switchTab('learn'),
+      openings: () => switchTab('openings'),
+      pieces: () => openPieceChooser(),
+      sound: () => { Sound.on = !Sound.on; store.set('sound', Sound.on); soundLabel(); this.render(); },
       analyse: () => { Analysis.loadRecord(store.get('games', [])[0]); switchTab('analysis'); },
       bot: i => { Play.botIdx = +i; store.set('botIdx', Play.botIdx); Play.setup = true; switchTab('play'); },
       open: i => { Analysis.loadRecord(store.get('games', [])[+i]); switchTab('analysis'); },
@@ -1934,13 +2350,14 @@ function gameItemHtml(g, i) {
 }
 
 let mode = 'home';
-const modes = { home: Home, learn: Learn, play: Play, puzzle: Puzzles, analysis: Analysis };
+const modes = { home: Home, learn: Learn, openings: Openings, play: Play, puzzle: Puzzles, analysis: Analysis };
 function switchTab(name) {
   mode = name;
   if (name !== 'learn') { document.body.classList.remove('learn-mode', 'lesson-mode', 'no-board'); }
+  if (name !== 'openings') document.body.classList.remove('openings-mode');
   document.body.classList.toggle('home-mode', name === 'home');
   document.querySelectorAll('.tabs button[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
-  for (const k of ['play', 'puzzle', 'analysis']) $('panel-' + k).classList.toggle('hidden', k !== name);
+  for (const k of ['play', 'puzzle', 'analysis', 'openings']) $('panel-' + k).classList.toggle('hidden', k !== name);
   board.sel = -1;
   modes[name].activate();
   renderBoardNav();
@@ -1972,6 +2389,7 @@ window.addEventListener('resize', resize);
 document.querySelectorAll('.tabs button[data-tab]').forEach(b => b.onclick = () => switchTab(b.dataset.tab));
 const soundLabel = () => { $('soundBtn').innerHTML = Sound.on ? '🔊<span class="lbl"> Ton an</span>' : '🔇<span class="lbl"> Ton aus</span>'; };
 soundLabel();
+$('piecesBtn').onclick = () => openPieceChooser();
 $('soundBtn').onclick = () => { Sound.on = !Sound.on; store.set('sound', Sound.on); soundLabel(); };
 document.addEventListener('click', e => { if (e.target.closest('button, .game-item, .rung')) Sound.play('ui'); }, true);
 document.addEventListener('keydown', e => {
@@ -1979,6 +2397,7 @@ document.addEventListener('keydown', e => {
   const d = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0;
   if (!d) return;
   if (mode === 'analysis' && Analysis.game) { Analysis.go(Analysis.ply + d); e.preventDefault(); }
+  if (mode === 'openings' && Openings.view === 'watch') { Openings.go(Openings.ply + d); e.preventDefault(); }
   if (mode === 'play' && Play.game) { Play.nav(d); e.preventDefault(); }
 });
 

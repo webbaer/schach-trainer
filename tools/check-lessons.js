@@ -20,7 +20,8 @@ for (const u of LESSONS) for (const l of u.lessons) l.steps.forEach((st, i) => {
     case 'move': {
       for (const u of st.ok) if (!pos.fromUci(u)) err(l.id, i, 'ok illegal ' + u);
       const best = e.search(pos, { timeMs: 400 });
-      console.log(`  ${l.id}#${i} ok=${st.ok.join(',')} engine=${pos.toUci(best.move)} (${best.score})`);
+      const okScores = st.ok.map(u => { const m = pos.fromUci(u); if (!m) return 'x'; pos.make(m); const r = pos.status() === 'checkmate' ? 99999 : -e.search(pos, { timeMs: 300 }).score; pos.unmake(); return u + ':' + r; });
+      console.log(`  ${l.id}#${i} ok=${okScores.join(',')} engine=${pos.toUci(best.move)} (${best.score})`);
       break;
     }
     case 'check': if (!has(() => pos.inCheck())) err(l.id, i, 'kein Schach möglich'); break;
@@ -33,7 +34,7 @@ for (const u of LESSONS) for (const l of u.lessons) l.steps.forEach((st, i) => {
       console.log(`  ${l.id}#${i} line=${st.sol.join(' ')} engine=${pos.toUci(best.move)} (${best.score})`);
       break;
     }
-    case 'playmate': if (!legal.length) err(l.id, i, 'keine Züge'); break;
+    case 'playmate': case 'promote': { if (!legal.length) err(l.id, i, 'keine Züge'); const r = e.search(pos, { timeMs: 1500 }); console.log(`  ${l.id}#${i} ${st.t} Bewertung ${r.score}`); if (r.score < 300) err(l.id, i, 'nicht klar gewonnen'); break; }
   }
 });
 console.log(n, 'Schritte geprüft,', errors, 'Fehler');

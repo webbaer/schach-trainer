@@ -11,6 +11,7 @@
 //   any      – irgendein legaler Zug (z. B. aus dem Schach ziehen)
 //   line     – Zugfolge "sol" (deine Züge und feste Antworten des Gegners abwechselnd)
 //   playmate – gegen die Engine in höchstens "max" Zügen Matt setzen
+//   promote  – gegen die Engine in höchstens "max" Zügen einen Bauern umwandeln
 // "last" = Zug des Gegners, der vor der Übung animiert wird.
 
 function lessonFen(s) {
@@ -303,6 +304,92 @@ const LESSONS = [
           { t: 'info', text: 'Auch mit **Turm und König** kann man Matt setzen. Der Turm sperrt dem König Reihen ab, dein König hilft – Stück für Stück an den Rand.' },
           { t: 'mate', pos: 'Kg6 Ra1 kg8', text: 'Setze Matt mit dem Turm!' },
           { t: 'playmate', fen: '8/8/8/4k3/8/8/8/R3K3 w - - 0 1', max: 40, text: 'Die Meisterprüfung: **Setze Matt** mit Turm und König in höchstens 40 Zügen!' }
+        ]
+      }
+    ]
+  },
+  {
+    id: 'u9', title: 'Taktik II', icon: '🎯', desc: 'Abzugsangriff, Doppelangriff und Doppelschach',
+    lessons: [
+      {
+        id: 'abzug', title: 'Abzugsangriff', icon: '💥', steps: [
+          { t: 'info', pos: 'Kg1 Rd1 Bd3 kg8 qd8', arrows: [['d1', 'd8']], marks: ['d3'], text: 'Beim **Abzugsangriff** zieht eine Figur weg und gibt dadurch den Weg für eine andere frei. Hier versperrt der Läufer d3 die Linie des Turms zur Dame.' },
+          { t: 'line', pos: 'Kg1 Rd1 Bd3 Pf2 Pg2 Ph2 kg8 qd8 nb8 pf7 pg7 ph7', sol: ['d3h7', 'g8h7', 'd1d8'], text: 'Zieh den Läufer **mit Schach** weg – dann ist die Dame nicht mehr zu retten!' },
+          { t: 'info', text: 'Ein **Doppelschach** ist ein Abzugsangriff, bei dem **beide** Figuren Schach geben. Dagegen hilft nur eins: **Der König muss ziehen.**' },
+          { t: 'quiz', q: 'Bei einem Doppelschach muss der König …', opts: ['ziehen', 'eine Figur dazwischenstellen', 'einen Angreifer schlagen lassen'], a: 0, why: 'Zwei Angreifer kann man nicht gleichzeitig blocken oder schlagen.' }
+        ]
+      },
+      {
+        id: 'doppelangriff', title: 'Doppelangriff', icon: '🔱', steps: [
+          { t: 'info', text: 'Die **Dame** ist die beste Figur für **Doppelangriffe**: Sie greift in acht Richtungen gleichzeitig an. Besonders stark: Schach **und** Angriff auf eine ungedeckte Figur.' },
+          { t: 'move', pos: 'Kg1 Qd1 Pf2 Pg2 Ph2 kg8 ra5 pf6 pg7 ph7', text: 'Gib Schach und greife gleichzeitig den Turm an!', ok: ['d1d8'], why: 'Von d8 aus greift die Dame den König **und** über die Diagonale den Turm a5 an. (Vorsicht: Auf d5 könnte der Turm die Dame schlagen!)', good: 'Doppelangriff – der Turm fällt!' },
+          { t: 'line', pos: 'Kg1 Nb5 Pf2 Pg2 Ph2 ke8 qc8 pa7 pb7 pf7 pg7 ph7', sol: ['b5d6', 'e8e7', 'd6c8'], text: 'Gib mit dem Springer **Schach** und greife dabei die Dame an – dann schlag sie!' },
+          { t: 'quiz', q: 'Was macht einen Doppelangriff so stark?', opts: ['Der Gegner kann nur eine Drohung abwehren', 'Er ist immer Matt', 'Er gewinnt immer die Dame'], a: 0, why: 'Zwei Drohungen – aber nur ein Zug zum Verteidigen.' }
+        ]
+      }
+    ]
+  },
+  {
+    id: 'u10', title: 'Mattbilder', icon: '☠️', desc: 'Typische Mattmuster, die man kennen muss',
+    lessons: [
+      {
+        id: 'ersticktes', title: 'Ersticktes Matt', icon: '🫢', steps: [
+          { t: 'info', pos: 'Kg1 Nf7 kh8 rg8 pg7 ph7', side: 'b', arrows: [['f7', 'h8']], text: 'Beim **erstickten Matt** ist der König von **eigenen Figuren** umzingelt – und ein Springer setzt Matt.' },
+          { t: 'mate', pos: 'Kg1 Ne5 Pg2 Ph2 kh8 rg8 pg7 ph7', text: 'Setze ersticktes Matt!' },
+          { t: 'line', pos: 'Kg1 Qd5 Nh6 Pf2 Pg2 Ph2 kh8 rf8 pg7 ph7', sol: ['d5g8', 'f8g8', 'h6f7'], text: 'Das berühmte **Damenopfer**: Opfere die Dame und setze danach ersticktes Matt!' }
+        ]
+      },
+      {
+        id: 'damenmuster', title: 'Dame + Helfer', icon: '💋', steps: [
+          { t: 'info', text: 'Die Dame setzt oft Matt, wenn eine **andere Figur sie deckt** – der König kann sie dann nicht schlagen. Das nennt man auch den „Kuss des Todes“.' },
+          { t: 'mate', pos: 'Kg1 Qg3 Pf6 Pg2 Ph2 kg8 rf8 ph7 pa7', text: 'Der Bauer f6 hilft der Dame. Setze Matt!' },
+          { t: 'mate', pos: 'Kg1 Qh5 Bd3 Pg2 Ph2 kg8 rf8 pf7 pg7', text: 'Dame und Läufer zielen auf h7. Setze Matt!' }
+        ]
+      },
+      {
+        id: 'treppe', title: 'Treppenmatt', icon: '🪜', steps: [
+          { t: 'info', text: 'Mit **zwei Türmen** geht Matt ganz ohne König: Ein Turm sperrt eine Reihe ab, der andere gibt Schach – abwechselnd, wie eine **Treppe**.' },
+          { t: 'mate', pos: 'Kg1 Ra7 Rb1 kh8', text: 'Ein Turm sperrt die 7. Reihe. Setze Matt mit dem anderen!' },
+          { t: 'playmate', fen: '8/8/8/3k4/8/8/8/R3K2R w - - 0 1', max: 15, text: 'Setze mit den zwei Türmen Matt – in höchstens 15 Zügen!' }
+        ]
+      }
+    ]
+  },
+  {
+    id: 'u11', title: 'Endspiel', icon: '♔', desc: 'Bauern umwandeln und Könige aktiv nutzen',
+    lessons: [
+      {
+        id: 'quadrat', title: 'Quadratregel', icon: '⬛', steps: [
+          { t: 'info', pos: 'Kh1 Pa4 ke5', marks: ['a4', 'b4', 'c4', 'd4', 'e4', 'a8', 'e8', 'a5', 'a6', 'a7', 'b8', 'c8', 'd8', 'e5', 'e6', 'e7'], text: 'Holt der König einen Bauern noch ein? Zeichne ein **Quadrat** vom Bauern bis zur letzten Reihe. Kann der König in dieses Quadrat ziehen, holt er den Bauern ein.' },
+          { t: 'quiz', pos: 'Kh1 Pa4 kf5', side: 'b', q: 'Schwarz ist am Zug. Holt der König den Bauern ein?', opts: ['Ja', 'Nein'], a: 0, why: 'Mit Ke5 (oder Ke4) betritt der König das Quadrat a4–e8.' },
+          { t: 'quiz', pos: 'Kh1 Pa4 kg5', side: 'b', q: 'Und jetzt? Holt der König den Bauern ein?', opts: ['Ja', 'Nein'], a: 1, why: 'Von g5 erreicht der König das Quadrat (Linie e oder näher) nicht mehr rechtzeitig.' }
+        ]
+      },
+      {
+        id: 'umwandeln', title: 'Bauer durchbringen', icon: '👑', steps: [
+          { t: 'info', text: 'Im Endspiel wird der **König zur Kampffigur**. Regel: Mit dem König **vor** dem eigenen Bauern gewinnt man meistens. Stehen sich die Könige mit einem Feld Abstand gegenüber, nennt man das **Opposition**.' },
+          { t: 'quiz', q: 'Wohin gehört der König im Bauernendspiel?', opts: ['Vor den eigenen Bauern', 'Hinter den eigenen Bauern', 'In die Ecke'], a: 0, why: 'Vor dem Bauern bahnt der König ihm den Weg.' },
+          { t: 'promote', fen: '4k3/8/4K3/8/4P3/8/8/8 w - - 0 1', max: 20, text: 'Führe den Bauern zur **Dame** – gegen den Computer! (höchstens 20 Züge)' }
+        ]
+      }
+    ]
+  },
+  {
+    id: 'u12', title: 'Strategie', icon: '🧠', desc: 'Gute Felder, offene Linien und Pläne',
+    lessons: [
+      {
+        id: 'linien', title: 'Offene Linien', icon: '🛣️', steps: [
+          { t: 'info', text: 'Eine **offene Linie** hat keine Bauern. **Türme** gehören auf offene Linien – dort sind sie am stärksten.' },
+          { t: 'move', pos: 'Kg1 Rf1 Pa2 Pb2 Pc2 Pf2 Pg2 Ph2 kg8 rf8 pa7 pb7 pc7 pf7 pg7 ph7', text: 'Stelle deinen Turm auf eine **offene Linie**!', ok: ['f1d1', 'f1e1'], why: 'Die d- und e-Linie sind frei von Bauern.', good: 'Der Turm kontrolliert jetzt die ganze Linie.' },
+          { t: 'quiz', q: 'Was ist eine offene Linie?', opts: ['Eine Linie ohne Bauern', 'Eine Linie ohne Türme', 'Die a- und h-Linie'], a: 0, why: 'Ohne Bauern können Türme die Linie ungehindert nutzen.' }
+        ]
+      },
+      {
+        id: 'vorposten', title: 'Vorposten', icon: '🏰', steps: [
+          { t: 'info', text: 'Ein **Vorposten** ist ein starkes Feld, das von einem eigenen Bauern gedeckt ist und **von keinem gegnerischen Bauern angegriffen** werden kann. Springer lieben Vorposten!' },
+          { t: 'move', pos: 'Kg1 Nc3 Pe4 Pa2 Pb2 Pf2 Pg2 Ph2 kg8 bc8 pd6 pe5 pa6 pb7 pg7 ph7', text: 'Stelle den Springer auf einen **Vorposten**!', ok: ['c3d5'], why: 'Auf d5 ist der Springer vom Bauern e4 gedeckt – und kein schwarzer Bauer kann ihn vertreiben.', good: 'Ein Springer auf d5 ist ein Monster!' },
+          { t: 'quiz', q: 'Deine Bauern stehen alle auf hellen Feldern. Welcher Läufer ist „schlecht“?', opts: ['Der hellfeldrige', 'Der dunkelfeldrige'], a: 0, why: 'Er wird von den eigenen Bauern blockiert. Ein guter Läufer hat freie Bahn.' },
+          { t: 'quiz', q: 'Was ist ein „Isolani“?', opts: ['Ein Bauer ohne Nachbarbauern', 'Ein König ohne Schutz', 'Eine Figur am Rand'], a: 0, why: 'Ein isolierter Bauer kann nicht von anderen Bauern gedeckt werden.' }
         ]
       }
     ]
