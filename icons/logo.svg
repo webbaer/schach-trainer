@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <g stroke="#2b1216" stroke-width="3" stroke-linejoin="round" stroke-linecap="round">
+    <!-- Bauer -->
+    <path d="M37 84 C38 75 43 70 45 67 H55 C57 70 62 75 63 84 Z" fill="#fffaf6"/>
+    <circle cx="50" cy="52" r="14" fill="#fffaf6"/>
+    <rect x="35" y="63" width="30" height="7.5" rx="3.75" fill="#fffaf6"/>
+    <path d="M27 95 H73 A4 4 0 0 0 77 91 V89 A6 6 0 0 0 71 83 H29 A6 6 0 0 0 23 89 V91 A4 4 0 0 0 27 95 Z" fill="#fffaf6"/>
+    <!-- Narrenkappe: seitliche Zipfel (hängend) -->
+    <path d="M43 42 C36 27 22 24 12 33 C10 39 12 45 15 48 C19 39 29 36 40 45 Z" fill="#ff8a9b"/>
+    <path d="M57 42 C64 27 78 24 88 33 C90 39 88 45 85 48 C81 39 71 36 60 45 Z" fill="#ff8a9b"/>
+    <!-- mittlerer Zipfel -->
+    <path d="M40 43 C40 30 44 19 50 9 C56 19 60 30 60 43 Z" fill="#f2c94c"/>
+    <!-- Krempe -->
+    <path d="M35 44 Q50 35 65 44 L64 49 Q50 41 36 49 Z" fill="#f2c94c"/>
+    <!-- Glöckchen -->
+    <circle cx="15" cy="50" r="5" fill="#f2c94c"/>
+    <circle cx="85" cy="50" r="5" fill="#f2c94c"/>
+    <circle cx="50" cy="8" r="5" fill="#d64560"/>
+  </g>
+</svg>

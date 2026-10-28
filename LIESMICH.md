@@ -1,4 +1,4 @@
-# Schach-Trainer ♞
+# Chesster
 
 Schach lernen, komplett offline und kostenlos: Bots, Rätsel und Partieanalyse.
 

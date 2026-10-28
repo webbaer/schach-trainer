@@ -1,5 +1,5 @@
 'use strict';
-// Schach-Trainer – Oberfläche, Bot, Rätsel und Partieanalyse (komplett offline)
+// Chesster – Oberfläche, Bot, Rätsel und Partieanalyse (komplett offline)
 
 const C = chessEngineFactory();
 const $ = id => document.getElementById(id);
@@ -233,7 +233,7 @@ class Game {
   pgn(h) {
     const date = new Date(h.date || Date.now());
     const d = date.getFullYear() + '.' + String(date.getMonth() + 1).padStart(2, '0') + '.' + String(date.getDate()).padStart(2, '0');
-    let s = `[Event "Schach-Trainer"]\n[Date "${d}"]\n[White "${h.white || '?'}"]\n[Black "${h.black || '?'}"]\n[Result "${h.result || '*'}"]\n`;
+    let s = `[Event "Chesster"]\n[Date "${d}"]\n[White "${h.white || '?'}"]\n[Black "${h.black || '?'}"]\n[Result "${h.result || '*'}"]\n`;
     if (this.startFen !== C.START_FEN) s += `[SetUp "1"]\n[FEN "${this.startFen}"]\n`;
     s += '\n';
     const p = new C.Position(this.startFen);
@@ -2113,8 +2113,8 @@ const Learn = {
 
   renderOnboarding() {
     $('learn').innerHTML = `<div class="onboard">
-      <div class="ob-logo"><i class="ic i-chess-knight"></i></div>
-      <h1>Willkommen beim Lernpfad!</h1>
+      <div class="ob-logo"><img src="icons/logo.svg" alt=""></div>
+      <h1>Willkommen bei Chesster!</h1>
       <p class="muted">Wie viel kannst du schon? Wähle deinen Start.</p>
       <button class="ob-card" data-act="begin"><div class="ob-ic"><i class="ic i-sprout"></i></div><div><b>Von Anfang an</b><span>Ich lerne Schach neu – vom Brett über die Figuren bis zum Matt.</span></div></button>
       <button class="ob-card" data-act="test"><div class="ob-ic"><i class="ic i-target"></i></div><div><b>Einstufungspartie</b><span>Ich kann schon spielen. Eine Partie gegen einen adaptiven Bot, der sich meiner Stärke anpasst – danach weiß die App, wo ich einsteige.</span></div></button>
@@ -3177,12 +3177,12 @@ function gameItemHtml(g, i) {
 let mode = 'home';
 const modes = { home: Home, learn: Learn, openings: Openings, play: Play, puzzle: Puzzles, analysis: Analysis, free: Free, editor: Editor };
 const TAB_OF = { free: 'analysis', editor: 'analysis' };
-const TAB_TITLES = { home: ['house', 'Übersicht'], learn: ['graduation-cap', 'Lernen'], openings: ['book-open', 'Eröffnungen'], play: ['swords', 'Spielen'],
+const TAB_TITLES = { home: [null, 'Chesster'], learn: ['graduation-cap', 'Lernen'], openings: ['book-open', 'Eröffnungen'], play: ['swords', 'Spielen'],
   puzzle: ['puzzle', 'Rätsel'], analysis: ['chart-line', 'Analyse'], free: ['search', 'Analysebrett'], editor: ['pencil', 'Stellung aufbauen'] };
 function switchTab(name) {
   mode = name;
   const tt = TAB_TITLES[name];
-  if (tt) $('mtopTitle').innerHTML = ico(tt[0]) + `<span>${tt[1]}</span>`;
+  if (tt) $('mtopTitle').innerHTML = (tt[0] ? ico(tt[0]) : '<img class="mtop-logo" src="icons/logo.svg" alt="">') + `<span>${tt[1]}</span>`;
   if (name !== 'learn') { document.body.classList.remove('learn-mode', 'lesson-mode', 'no-board'); }
   if (name !== 'openings') document.body.classList.remove('openings-mode');
   if (name !== 'play') document.body.classList.remove('play-setup');

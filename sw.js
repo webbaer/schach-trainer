@@ -1,8 +1,8 @@
 // Offline-Cache: alle Dateien werden beim ersten Öffnen gespeichert.
 // Bei Änderungen an der App VERSION erhöhen, damit Handys die neue Version laden.
-const VERSION = 'schach-v12';
+const VERSION = 'chesster-v13';
 const FILES = ['./', './index.html', './style.css', './icons.css', './app.js', './engine.js', './puzzles.js', './lessons.js', './openings.js', './manifest.webmanifest',
-  './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png', './icons/apple-touch-icon.png'];
+  './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png', './icons/apple-touch-icon.png', './icons/logo.svg'];
 
 const PIECES = ['cburnett', 'merida', 'chessnut', 'fantasy', 'celtic', 'spatial', 'papercut', 'rhosgfx', 'kiwen-suwi']
   .flatMap(set => ['w', 'b'].flatMap(c => ['K', 'Q', 'R', 'B', 'N', 'P'].map(p => `./pieces/${set}/${c}${p}.svg`)));

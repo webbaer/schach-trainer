@@ -1,7 +1,7 @@
 {
-  "name": "Schach-Trainer",
-  "short_name": "Schach",
-  "description": "Schach lernen offline: Bots, Rätsel und Partieanalyse",
+  "name": "Chesster",
+  "short_name": "Chesster",
+  "description": "Chesster – Schach lernen offline: Bots, Rätsel, Lernpfad und Partieanalyse",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
@@ -10,8 +10,26 @@
   "theme_color": "#160f11",
   "lang": "de",
   "icons": [
-    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
-    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    {
+      "src": "icons/logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    },
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
   ]
 }

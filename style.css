@@ -739,3 +739,9 @@ body.openings-mode .board-area, body.openings-mode .panel { display: none; }
   .op-filters .seg::-webkit-scrollbar { display: none; }
   .op-filters .seg button { flex: none; padding: 8px 12px; }
 }
+
+/* ---------- Chesster-Logo ---------- */
+.brand .logo { background: linear-gradient(135deg, #e8566f, #962338); }
+.brand .logo img { width: 32px; height: 32px; }
+.ob-logo img { width: 66px; height: 66px; }
+.mtop-logo { width: 30px; height: 30px; border-radius: 8px; background: linear-gradient(135deg, #e8566f, #962338); padding: 2px; }
