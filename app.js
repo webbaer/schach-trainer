@@ -263,9 +263,120 @@ function parsePgn(text) {
 }
 
 const STATUS_TEXT = {
+  import: 'Importiert',
   placement: 'Einstufung beendet', timeout: 'Zeit abgelaufen',
   checkmate: 'Schachmatt', stalemate: 'Patt', insufficient: 'Ungenügendes Material',
   fifty: '50-Züge-Regel', repetition: 'Dreifache Stellungswiederholung', resign: 'Aufgabe'
+};
+
+// ---------- PGN-Import (Dateien von chess.com, lichess …, auch mehrere Partien) ----------
+function splitPgnGames(text) {
+  const t = text.replace(/^﻿/, '').replace(/\r\n?/g, '\n').trim();
+  if (!t) return [];
+  return t.split(/\n\s*\n(?=\s*\[\w+\s+")/).map(x => x.trim()).filter(Boolean);
+}
+function parsePgnMulti(text) {
+  const games = [], errors = [];
+  splitPgnGames(text).forEach((chunk, i) => {
+    try {
+      const r = parsePgn(chunk);
+      if (r.game.moves.length) games.push(r); else errors.push(`Partie ${i + 1}: keine Züge`);
+    } catch (e) { errors.push(`Partie ${i + 1}: ${e.message}`); }
+  });
+  return { games, errors };
+}
+
+const PgnImport = {
+  sameName(a, b) { return a && b && a.trim().toLowerCase() === b.trim().toLowerCase(); },
+  dateOf(h) {
+    const m = /^(\d{4})\.(\d{2})\.(\d{2})/.exec(h.UTCDate || h.Date || '');
+    return m ? new Date(+m[1], +m[2] - 1, +m[3], 12).getTime() : Date.now();
+  },
+  label(h, c) {
+    const n = (c ? h.Black : h.White) || (c ? 'Schwarz' : 'Weiß'), elo = c ? h.BlackElo : h.WhiteElo;
+    return elo && /^\d+$/.test(elo) ? `${n} (${elo})` : n;
+  },
+  autoColor(h) {
+    const me = store.get('myName', '');
+    if (this.sameName(me, h.White)) return 0;
+    if (this.sameName(me, h.Black)) return 1;
+    return null;
+  },
+  record(g, userColor) {
+    const h = g.headers;
+    return {
+      id: Date.now() + Math.floor(Math.random() * 1000), date: this.dateOf(h), imported: true,
+      white: this.label(h, 0), black: this.label(h, 1), result: h.Result || '*', reason: 'import',
+      userColor, startFen: g.game.startFen, moves: g.game.uci(), site: h.Site || ''
+    };
+  },
+  // Partie in die Liste übernehmen (Duplikate werden erkannt)
+  save(rec) {
+    const list = store.get('games', []);
+    const key = r => [r.white, r.black, r.date, r.moves.join('')].join('|');
+    const k = key(rec), found = list.find(r => key(r) === k);
+    if (found) { if (rec.userColor != null) found.userColor = rec.userColor; store.set('games', list); return found; }
+    list.unshift(rec);
+    store.set('games', list.slice(0, 150));
+    return rec;
+  },
+  async openFile(file) {
+    if (!file) return;
+    try { this.handle(await file.text(), file.name); }
+    catch (e) { alert('Die Datei konnte nicht gelesen werden.'); }
+  },
+  handle(text, name) {
+    const { games, errors } = parsePgnMulti(text);
+    if (!games.length) { alert('Keine gültige Partie gefunden.' + (errors.length ? '\n' + errors[0] : '')); return; }
+    if (games.length === 1) this.pickColor(games[0]);
+    else this.showList(games, errors, name);
+  },
+  showList(games, errors, name) {
+    const me = store.get('myName', '');
+    showModal(`<div class="modal-ic">${ico('file-input')}</div><h2>${games.length} Partien gefunden</h2>
+      <p class="muted small">${esc(name || 'PGN')}${errors.length ? ` · ${errors.length} nicht lesbar` : ''} · Tippe eine Partie zum Analysieren an.</p>
+      <div class="pgn-list">${games.slice(0, 200).map((g, i) => {
+        const h = g.headers, c = this.autoColor(h);
+        return `<button class="pgn-item" data-act="pick" data-arg="${i}">
+          <div><b>${esc(this.label(h, 0))}</b> – <b>${esc(this.label(h, 1))}</b>${c != null ? ` <span class="pill ok">${c ? 'du: Schwarz' : 'du: Weiß'}</span>` : ''}</div>
+          <div class="muted small">${esc(h.Result || '*')} · ${Math.ceil(g.game.moves.length / 2)} Züge · ${new Date(this.dateOf(h)).toLocaleDateString('de-DE')}${h.Event && h.Event !== '?' ? ' · ' + esc(h.Event) : ''}</div></button>`;
+      }).join('')}</div>
+      <button class="btn full" data-act="all">Alle ${games.length} in die Partienliste übernehmen</button>
+      <button class="btn full" data-act="close">Abbrechen</button>
+      ${me ? `<p class="muted small">Dein gespeicherter Name: <b>${esc(me)}</b></p>` : ''}`, {
+      pick: i => this.pickColor(games[+i]),
+      all: () => {
+        for (const g of games) this.save(this.record(g, this.autoColor(g.headers)));
+        hideModal();
+        if (mode === 'analysis') Analysis.renderPanel();
+        showModal(`<div class="modal-ic">${ico('circle-check')}</div><h2>${games.length} Partien übernommen</h2><p class="muted small">Du findest sie unter „Gespeicherte Partien“ und kannst jede einzeln analysieren.</p><button class="btn primary full" data-act="c">OK</button>`, { c: hideModal });
+      },
+      close: hideModal
+    });
+  },
+  pickColor(g) {
+    const h = g.headers, auto = this.autoColor(h);
+    if (auto != null) { hideModal(); this.start(g, auto); return; }
+    showModal(`<div class="modal-ic">${ico('user')}</div><h2>Wer bist du?</h2>
+      <p class="muted small">Dann siehst du deine Genauigkeit, und deine Fehler landen im Fehler-Training. Chesster merkt sich deinen Namen für künftige Importe.</p>
+      <button class="btn full pgn-side" data-act="c" data-arg="0">${sideAvatar(0)} ${esc(this.label(h, 0))}</button>
+      <button class="btn full pgn-side" data-act="c" data-arg="1">${sideAvatar(1)} ${esc(this.label(h, 1))}</button>
+      <button class="btn full" data-act="c" data-arg="-1">Keiner von beiden – nur ansehen</button>`, {
+      c: v => {
+        v = +v;
+        const name = v === 0 ? h.White : v === 1 ? h.Black : '';
+        if (name && name !== '?') store.set('myName', name);
+        hideModal();
+        this.start(g, v < 0 ? null : v);
+      }
+    });
+  },
+  start(g, userColor) {
+    const rec = this.save(this.record(g, userColor));
+    rec.userColor = userColor;
+    Analysis.loadRecord(rec);
+    if (mode !== 'analysis') switchTab('analysis'); else Analysis.activate();
+  }
 };
 
 // ---------- Brett ----------
@@ -1884,6 +1995,7 @@ const Analysis = {
 
   renderPanel() {
     const p = $('panel-analysis');
+    document.body.classList.toggle('ana-idle', mode === 'analysis' && !this.game);
     const games = store.get('games', []);
     const listHtml = games.length ? games.map((g, i) => gameItemHtml(g, i)).join('') : '<p class="muted">Noch keine gespeicherten Partien. Spiel eine Partie gegen den Bot!</p>';
 
@@ -1894,12 +2006,15 @@ const Analysis = {
       const curGame = Play.game && Play.game.moves.length;
       p.innerHTML = `<h2>Partieanalyse</h2>
         <p class="muted small">Die Engine bewertet jeden Zug, berechnet deine Genauigkeit und zeigt dir Fehler und bessere Züge.</p>
+                <button class="pgn-drop" id="pgnDrop" data-act="file"><span class="pd-ic">${ico('file-input')}</span><div><b>PGN-Datei öffnen</b><span>Von chess.com, lichess &amp; Co. – auch mit vielen Partien${window.innerWidth > 980 ? ' · oder Datei hierher ziehen' : ''}</span></div></button>
+        <input type="file" id="pgnFile" hidden>
+        <details class="pgn-paste"><summary>oder PGN-Text einfügen</summary>
+        <textarea id="pgnIn" placeholder="PGN-Text einfügen, z. B. 1. e4 e5 2. Sf3 Sc6 3. Lb5 … (deutsche oder englische Notation)"></textarea>
+        <div style="height:6px"></div><button class="btn full" data-act="import">PGN analysieren</button></details>
         <div class="btn-row"><button class="btn" data-act="free"><i class="ic i-search"></i> Analysebrett</button><button class="btn" data-act="editor"><i class="ic i-pencil"></i> Stellung aufbauen</button></div>
         ${curGame ? '<button class="btn primary full" data-act="cur">Aktuelle Partie analysieren</button>' : ''}
         <h3>Gespeicherte Partien</h3>${listHtml}
-        <h3>PGN einfügen</h3>
-        <textarea id="pgnIn" placeholder="PGN-Text einfügen, z. B. 1. e4 e5 2. Sf3 Sc6 3. Lb5 … (deutsche oder englische Notation)"></textarea>
-        <div style="height:6px"></div><button class="btn full" data-act="import">PGN analysieren</button>
+
         <div style="height:10px"></div>${settings}`;
     } else {
       const s = this.summary;
@@ -1942,14 +2057,8 @@ const Analysis = {
       },
       open: i => { this.loadRecord(games[+i]); this.activate(); },
       del: (i, e) => { e.stopPropagation(); games.splice(+i, 1); store.set('games', games); this.renderPanel(); },
-      import: () => {
-        try {
-          const { game, headers } = parsePgn($('pgnIn').value);
-          if (!game.moves.length) throw new Error('Keine Züge gefunden');
-          this.loadRecord({ date: Date.now(), white: headers.White || 'Weiß', black: headers.Black || 'Schwarz', result: headers.Result || '*', userColor: null, startFen: game.startFen, moves: game.uci() });
-          this.activate();
-        } catch (err) { alert(err.message); }
-      },
+      import: () => PgnImport.handle($('pgnIn').value, 'Eingefügter Text'),
+      file: () => $('pgnFile').click(),
       close: () => { analysisEngine.cancel(); this.token++; this.game = null; this.record = null; this.running = false; this.activate(); },
       first: () => this.go(0), prev: () => this.go(this.ply - 1), next: () => this.go(this.ply + 1), last: () => this.go(1e9),
       nextErr: () => {
@@ -1968,6 +2077,14 @@ const Analysis = {
       editor: () => Editor.open(),
       mistakes: () => { Puzzles.theme = 'mine'; store.set('puzzleTheme', 'mine'); Puzzles.view = 'train'; Puzzles.cur = null; switchTab('puzzle'); }
     });
+    const fi = $('pgnFile');
+    if (fi) {
+      fi.onchange = () => { PgnImport.openFile(fi.files[0]); fi.value = ''; };
+      const dz = $('pgnDrop');
+      dz.ondragover = e => { e.preventDefault(); dz.classList.add('over'); };
+      dz.ondragleave = () => dz.classList.remove('over');
+      dz.ondrop = e => { e.preventDefault(); dz.classList.remove('over'); PgnImport.openFile(e.dataTransfer.files[0]); };
+    }
     const sel = $('anaTime');
     if (sel) sel.onchange = e => { this.timeMs = +e.target.value; store.set('anaTime', this.timeMs); };
     if (this.game) { this.renderExplain(); this.renderMoves(); this.renderGraph(); }
@@ -3102,7 +3219,7 @@ const Home = {
   activate() { this.render(); },
   render() {
     const games = store.get('games', []), ps = Puzzles.st;
-    const vsBot = games.filter(g => g.userColor != null);
+    const vsBot = games.filter(g => g.userColor != null && !g.imported);
     let w = 0, d = 0, l = 0;
     for (const g of vsBot) {
       if (g.result === '1/2-1/2') d++;
@@ -3170,7 +3287,7 @@ function gameItemHtml(g, i) {
   const res = g.result === '1/2-1/2' || uc == null ? 'draw' : ((g.result === '1-0') === (uc === 0) ? 'win' : 'loss');
   const resTxt = g.result === '1/2-1/2' ? 'Remis' : uc == null ? g.result : res === 'win' ? 'Sieg' : 'Niederl.';
   return `<div class="game-item" data-act="open" data-arg="${i}"><div class="res ${res}">${resTxt}</div>
-    <div class="info"><b>${esc(g.white)}</b> – <b>${esc(g.black)}</b><br><span class="muted">${new Date(g.date).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' })} · ${Math.ceil(g.moves.length / 2)} Züge · ${STATUS_TEXT[g.reason] || g.result}${g.acc != null ? ` · <i class="ic i-target"></i> ${g.acc}%` : ''}</span></div>
+    <div class="info"><b>${esc(g.white)}</b> – <b>${esc(g.black)}</b>${g.imported ? ' <span class="pill">PGN</span>' : ''}<br><span class="muted">${new Date(g.date).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' })} · ${Math.ceil(g.moves.length / 2)} Züge · ${STATUS_TEXT[g.reason] || g.result}${g.acc != null ? ` · <i class="ic i-target"></i> ${g.acc}%` : ''}</span></div>
     <button class="btn small" data-act="del" data-arg="${i}" title="Löschen">✕</button></div>`;
 }
 
@@ -3186,6 +3303,7 @@ function switchTab(name) {
   if (name !== 'learn') { document.body.classList.remove('learn-mode', 'lesson-mode', 'no-board'); }
   if (name !== 'openings') document.body.classList.remove('openings-mode');
   if (name !== 'play') document.body.classList.remove('play-setup');
+  if (name !== 'analysis') document.body.classList.remove('ana-idle');
   document.body.classList.toggle('home-mode', name === 'home');
   document.querySelectorAll('.tabs button[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === (TAB_OF[name] || name)));
   for (const k of ['play', 'puzzle', 'analysis', 'openings', 'free', 'editor']) $('panel-' + k).classList.toggle('hidden', k !== name);

@@ -1,6 +1,6 @@
 // Offline-Cache: alle Dateien werden beim ersten Öffnen gespeichert.
 // Bei Änderungen an der App VERSION erhöhen, damit Handys die neue Version laden.
-const VERSION = 'chesster-v13';
+const VERSION = 'chesster-v14';
 const FILES = ['./', './index.html', './style.css', './icons.css', './app.js', './engine.js', './puzzles.js', './lessons.js', './openings.js', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png', './icons/apple-touch-icon.png', './icons/logo.svg'];
 

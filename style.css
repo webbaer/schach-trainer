@@ -745,3 +745,21 @@ body.openings-mode .board-area, body.openings-mode .panel { display: none; }
 .brand .logo img { width: 32px; height: 32px; }
 .ob-logo img { width: 66px; height: 66px; }
 .mtop-logo { width: 30px; height: 30px; border-radius: 8px; background: linear-gradient(135deg, #e8566f, #962338); padding: 2px; }
+
+/* ---------- PGN-Import ---------- */
+.pgn-drop { display: flex; align-items: center; gap: 14px; width: 100%; text-align: left; padding: 16px; border-radius: 14px;
+  background: linear-gradient(135deg, rgba(214, 69, 96, .16), rgba(214, 69, 96, .04)); border: 2px dashed rgba(214, 69, 96, .55); }
+.pgn-drop:hover, .pgn-drop.over { border-color: var(--accent2); background: rgba(214, 69, 96, .22); }
+.pgn-drop .pd-ic { width: 48px; height: 48px; border-radius: 12px; background: var(--accent); color: #fff; display: grid; place-items: center; flex: none; }
+.pgn-drop .pd-ic .ic { font-size: 24px; }
+.pgn-drop b { display: block; font-size: 16px; }
+.pgn-drop span:not(.pd-ic) { color: var(--muted); font-size: 13px; }
+.pgn-paste { margin-top: 10px; }
+.pgn-paste summary { color: var(--muted); font-size: 14px; cursor: pointer; padding: 6px 0; }
+.pgn-paste textarea { margin-top: 6px; }
+.pgn-list { display: flex; flex-direction: column; gap: 6px; max-height: 48vh; overflow-y: auto; margin: 10px 0; text-align: left; }
+.pgn-item { text-align: left; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; font-size: 14px; }
+.pgn-item:hover { border-color: var(--accent); }
+.pgn-side { justify-content: flex-start; gap: 10px; }
+.pgn-side .mono { width: 28px; height: 28px; }
+@media (max-width: 980px) { body.ana-idle .board-area { display: none; } }
